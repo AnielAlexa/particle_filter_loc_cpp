@@ -1,0 +1,167 @@
+camera_original:
+  fx: 1129.0
+  fy: 1130.0
+  w: 1280
+  h: 720
+  heading_offset_deg: 270   # camera mount offset added to yaw for satellite alignment
+
+enu_origin:
+  lat: 45.7896
+  lon: 21.1928
+
+particle_filter:
+  n_dispersed: 300               # combo_F: more particles for noise robustness (was 200)
+  n_tracking: 150                # combo_F: (was 100)
+  sigma_pos_dispersed: 2.0
+  sigma_pos_tracking: 3.0       # VIO-tuned: wide process noise for drift robustness (was 1.0)
+  sigma_hdg_dispersed: 10.0
+  sigma_hdg_tracking: 2.0
+  # Drift noise: simulates VIO-like uncertainty, forces PF to rely on matching
+  drift_noise_m_per_s: 0       # tuned: best avg at sub=3 across noise levels (was 1.5)
+  drift_noise_hdg_per_s: 0.0      # 1.5x position drift
+  sigma_obs_coarse: 10.0         # tight coarse pull
+  sigma_obs_fine: 5.0            # VIO-tuned: tight obs pull to correct drift (was 10)
+  top_k_coarse: 5
+  ess_threshold_fraction: 0.5
+  init_altitude_m: 50.0          # match altitude_min_process_m; RTK-init doesn't need VPR
+  converge_spread_m: 40.0        # enter CONVERGING earlier
+  tracking_spread_m: 20.0        # enter TRACKING earlier
+  lost_spread_m: 150.0
+  fine_every_n_frames: 3          # jetson: every 3rd frame in TRACKING (was 2)
+  fine_early_exit_inliers: 15    # jetson: cascade — stop fine matching once inliers >= this
+  fine_min_inliers_heading: 12
+  # Adaptive search (driven by particle spread)
+  min_search_radius_m: 40.0
+  search_radius_multiplier: 2.5
+  base_context_fraction: 0.2
+  max_context_fraction: 1.0
+  # Altitude-adaptive coarse sigma
+  altitude_sigma_enabled: false
+  altitude_sigma_ref_m: 60.0
+  altitude_sigma_scale: 0.5
+  # Static detection: suppress noise when hovering
+  static_threshold_m: 0.15         # RTK delta below this = static
+  static_sigma_scale: 0.1          # process noise multiplier when static
+  # Fine match consistency gate (0 = disabled)
+  fine_consistency_max_m: 40.0     # combo_F: wider gate for drift tolerance (was 20)
+  fine_force_inliers: 0             # disabled
+  # Roughening: jitter after resampling to prevent particle collapse
+  roughen_enabled: true
+  roughen_scale: 2.0              # VIO-tuned: prevents particle collapse under drift (was 0.5)
+  # Student-t likelihood: mild outlier robustness (nu>100 = Gaussian)
+  likelihood_nu: 5.0
+  # Adaptive param interpolation: blend RTK and VIO params based on
+  # observed correction magnitudes. When disabled, uses static values above.
+  adaptive_enabled: true
+  adaptive_ema_alpha: 0.2
+  adaptive_drift_low_m: 2.0            # correction/spread ratio EMA below this = RTK
+  adaptive_drift_high_m: 4.0           # correction/spread ratio EMA above this = VIO
+  adaptive_sigma_pos_rtk: 0.5
+  adaptive_sigma_obs_fine_rtk: 15.0
+  adaptive_roughen_scale_rtk: 0.5
+  adaptive_sigma_pos_vio: 3.0
+  adaptive_sigma_obs_fine_vio: 5.0
+  adaptive_roughen_scale_vio: 2.0
+
+trust:
+  # Recon similarity: compute cosine sim between drone frame and reconstructed satellite crop
+  # Feeds drift detection + coarse teleport suppression. Disabled = save ~4ms/frame.
+  recon_sim_enabled: false
+  # Signal weights (must sum to 1.0); agreement+temporal removed — redistributed
+  inlier_tau: 25.0
+  inlier_weight: 0.39
+  sim_floor: 0.10
+  sim_ceiling: 0.55
+  sim_weight: 0.22
+  consistency_weight: 0.11
+  consistency_min_radius_m: 30.0
+  altitude_weight: 0.11
+  altitude_ref_m: 60.0
+  # Signal 7: Inlier flow geometry
+  geometry_weight: 0.17
+  # Sigma modulation
+  sigma_min_scale: 0.3           # combo_F: wider range (was 0.5)
+  sigma_max_scale: 5.0           # combo_F: (was 3.0)
+  # Drift detection
+  drift_pf_confidence_threshold: 0.3
+  drift_recon_sim_threshold: 0.20
+  drift_coarse_sim_min: 0.35
+  drift_sigma_cap: 3.0
+  # EMA smoothing
+  ema_alpha: 0.5
+  min_confidence: 0.05
+  # High-confidence joint gate (satellite/mosaic candidates only)
+  recon_high_conf_sim_thr: 0.30     # recon_sim must exceed this
+  recon_high_conf_inlier_thr: 25    # inliers must exceed this
+  recon_high_conf_boost: 1.5        # confidence multiplier when both met
+  # Coarse teleport (continuous)
+  coarse_sim_floor: 0.25
+  coarse_sim_ceiling: 0.60
+  coarse_max_teleport_fraction: 0.8
+  coarse_teleport_sigma_range: [15.0, 30.0]
+  # Global correction: relocalize from coarse+fine when reconstruction diverges
+  global_corr_enabled: false      # jetson: disabled — adds complexity with rare benefit
+  global_corr_recon_sim_threshold: 0.15   # recon_sim below this = "divergent"
+  global_corr_min_frames: 3               # consecutive divergent frames to trigger
+  global_corr_min_inliers: 10             # coarse-patch fine must have >= this
+  global_corr_min_spread_m: 15.0          # don't fire when PF is tight/confident (< this)
+  global_corr_max_spread_m: 50.0          # don't fire when PF is too dispersed (> this)
+  global_corr_position_consistency_m: 40.0 # coarse-fine positions must agree within this
+  global_corr_cooldown_frames: 10          # min frames between corrections
+  global_corr_teleport_fraction: 0.35      # fraction of particles injected as competing hypothesis
+  global_corr_teleport_sigma: 10.0         # spread of teleported particles (m)
+
+matchers:
+  script_dir: "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
+  # ── Coarse matcher switch ─────────────────────────────────────────────
+  use_vlad: false
+  # VLAD (timm DINOv3 + hard-assignment VLAD, no TRT required)
+  vlad_codebook_path:    "data/descriptors_vlad_l10_aerial/vlad_codebook.pt"
+  vlad_database_path:    "data/descriptors_vlad_l10_aerial/vlad_descriptors_pca768.pt"
+  vlad_patch_names_path: "data/descriptors_vlad_l10_aerial/patch_names.txt"
+  vlad_num_clusters: 16
+  vlad_layer_idx: 10
+  vlad_image_size: 256
+  vlad_pca_dim: 768            # 0 = no PCA, >0 = PCA whitening to N dims
+  # VLAD+PCA TRT (set use_vlad: false, use_vlad_trt: true)
+  use_vlad_trt: true
+  vlad_trt_engine_path: "dinov3_vlad_pca768_l10_value_256.engine"
+  # BoQ TRT (set use_vlad: false to restore this path)
+  boq_engine_path: "dinov3_lora_gray_boq_l10_value_256.engine"
+  boq_database_path: "data/descriptors_boq/boq_descriptors.pt"
+  patch_names_path: "data/descriptors_boq/patch_names.txt"
+  # ─────────────────────────────────────────────────────────────────────
+  ransac_max_iters: 1000          # jetson: cap findHomography iterations (cv2 default=2000)
+  fine_engine_path: "MatchAnything/matchanything_eloftr_320.trt"
+  use_pytorch_matcher: false         # true = PyTorch FP32, false = TRT
+  fine_ckpt_path: "MatchAnything/matchanything_eloftr.ckpt"
+  gps_metadata_path: "data/patches/gps_metadata.json"
+  patches_dir: "data/patches"
+  image_size: 256
+  grayscale: true
+  matcher_resolution: 320
+  camera_fx: 501.8
+  camera_fy: 502.1
+  camera_cx: 151.1
+  camera_cy: 221.9
+  context_enabled: true
+  context_fraction: 0.2
+  fine_conf_threshold: 0.20
+  min_inliers_ransac: 4
+  min_inliers: 8
+
+init:
+  lock_n_frames: 4          # consecutive top-1 hits before seeding
+  lock_sim_threshold: 0.3  # minimum sim to count as a hit
+
+replay:
+  mcap_path: "/home/jetson/bags_remote/Day2.6/Day2.6_0.mcap"
+  camera_topic: "/camera/image_rect"
+  rtk_topic: "/m300/rtk/fix"
+  yaw_topic: "/m300/rtk/yaw"
+  altimeter_topic: "/altimeter/range"
+  start_offset_s: 50.0        # skip this many seconds from bag start
+  camera_subsample: 3           # tuned: best avg across noise levels (~7Hz at 20Hz camera)
+  altitude_min_process_m: 50.0  # skip camera frames if median altitude below this
+  output_csv: "results/pf_results.csv"
+  output_plot: "results/pf_trajectory.png"
