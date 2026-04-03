@@ -28,10 +28,13 @@ class ImageCropNode(Node):
         self.declare_parameter("input_topic", "/camera/image_mono")
         self.declare_parameter("output_topic", "/camera/image_rect")
         self.declare_parameter("output_size", 320)
+        self.declare_parameter("subsample", 3)
 
         input_topic = self.get_parameter("input_topic").value
         output_topic = self.get_parameter("output_topic").value
         self.output_size = self.get_parameter("output_size").value
+        self.subsample = self.get_parameter("subsample").value
+        self.frame_count = 0
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -46,10 +49,15 @@ class ImageCropNode(Node):
 
         self.get_logger().info(
             f"Crop node: {input_topic} -> {output_topic} "
-            f"(crop to square, resize {self.output_size}x{self.output_size})"
+            f"(crop to square, resize {self.output_size}x{self.output_size}, "
+            f"subsample={self.subsample})"
         )
 
     def callback(self, msg: Image):
+        self.frame_count += 1
+        if self.frame_count % self.subsample != 0:
+            return
+
         h = msg.height
         w = msg.width
 

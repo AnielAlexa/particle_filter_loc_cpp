@@ -1,6 +1,7 @@
 #include "particle_filter_loc_cpp/pf_node.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <numeric>
 
 #include <cv_bridge/cv_bridge.h>
@@ -74,6 +75,29 @@ void PFGeoLocNode::print_stats() {
         s.patch_ok, s.patch_tried,
         s.patch_ok > 0 ? (double)s.total_patch_inliers / s.patch_ok : 0.0,
         s.skip_coarse);
+
+    // Append to stats CSV
+    std::string stats_path = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/results/pf_stats.csv";
+    bool file_exists = std::ifstream(stats_path).good();
+    std::ofstream f(stats_path, std::ios::app);
+    if (f.is_open()) {
+        if (!file_exists) {
+            f << "mosaic_ctx_scale,frames,fine_frames,coarse_only,"
+              << "sat_ok,sat_tried,sat_avg_inl,"
+              << "mosaic_ok,mosaic_tried,mosaic_avg_inl,"
+              << "patch_ok,patch_tried,patch_avg_inl,"
+              << "skip_coarse\n";
+        }
+        f << cfg_.matchers.mosaic_context_scale << ","
+          << frame_count_ << "," << s.fine_frames << "," << s.coarse_only << ","
+          << s.satellite_ok << "," << s.satellite_tried << ","
+          << (s.satellite_ok > 0 ? (double)s.total_sat_inliers / s.satellite_ok : 0.0) << ","
+          << s.mosaic_ok << "," << s.mosaic_tried << ","
+          << (s.mosaic_ok > 0 ? (double)s.total_mosaic_inliers / s.mosaic_ok : 0.0) << ","
+          << s.patch_ok << "," << s.patch_tried << ","
+          << (s.patch_ok > 0 ? (double)s.total_patch_inliers / s.patch_ok : 0.0) << ","
+          << s.skip_coarse << "\n";
+    }
 }
 
 void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& msg) {
