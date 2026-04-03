@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 
+#include <builtin_interfaces/msg/time.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
@@ -31,7 +32,8 @@ private:
     void rtk_callback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr& msg);
     void yaw_callback(const std_msgs::msg::Float64::ConstSharedPtr& msg);
     void alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& msg);
-    void process_frame(const uint8_t* mono_data, int width, int height);
+    void process_frame(const uint8_t* mono_data, int width, int height,
+                       const builtin_interfaces::msg::Time& stamp);
 
     // Config
     FullConfig cfg_;

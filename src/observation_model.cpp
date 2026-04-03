@@ -255,6 +255,63 @@ std::optional<FineResult> ObservationModel::fine_match(
     return std::nullopt;
 }
 
+std::optional<FineResult> ObservationModel::fine_match_on_satellite(
+    const uint8_t* mono_data, int width, int height,
+    const cv::Mat& satellite_crop,
+    const FlatMeta& mosaic_meta,
+    const cv::Mat& warp_M_inv)
+{
+    pose_->set_altitude(altitude_m);
+    int res = cfg_.matcher_resolution;
+    int sh = satellite_crop.rows, sw = satellite_crop.cols;
+
+    auto match_out = fine_->match(mono_data, width, height,
+                                   satellite_crop.data, sw, sh);
+    if (match_out.num_matches < cfg_.min_inliers_ransac) return std::nullopt;
+
+    auto flow = compute_flow_metrics(match_out.keypoints0, match_out.keypoints1);
+
+    // Scale keypoints from matcher res to satellite_crop pixel space
+    Eigen::MatrixXf mkpts1_sat = match_out.keypoints1;
+    mkpts1_sat.col(0) *= static_cast<float>(sw) / res;
+    mkpts1_sat.col(1) *= static_cast<float>(sh) / res;
+
+    // Un-warp: satellite_crop pixels → North-up mosaic pixels via perspective M_inv (3x3)
+    int n = mkpts1_sat.rows();
+    Eigen::MatrixXf mkpts1_northup(n, 2);
+    for (int i = 0; i < n; ++i) {
+        double x = mkpts1_sat(i, 0), y = mkpts1_sat(i, 1);
+        double w_h = warp_M_inv.at<double>(2, 0) * x + warp_M_inv.at<double>(2, 1) * y + warp_M_inv.at<double>(2, 2);
+        if (std::abs(w_h) < 1e-8) w_h = 1e-8;
+        mkpts1_northup(i, 0) = static_cast<float>(
+            (warp_M_inv.at<double>(0, 0) * x + warp_M_inv.at<double>(0, 1) * y + warp_M_inv.at<double>(0, 2)) / w_h);
+        mkpts1_northup(i, 1) = static_cast<float>(
+            (warp_M_inv.at<double>(1, 0) * x + warp_M_inv.at<double>(1, 1) * y + warp_M_inv.at<double>(1, 2)) / w_h);
+    }
+
+    FlatMeta north_meta = mosaic_meta;
+
+    auto pnp_result = pose_->solve_pnp(match_out.keypoints0, mkpts1_northup, north_meta);
+    if (pnp_result.has_value() && pnp_result->inliers >= cfg_.min_inliers) {
+        auto& r = pnp_result.value();
+        return FineResult{r.lat, r.lon, r.inliers, "pnp", r.heading_deg,
+                         "satellite", flow.flow_consistency, flow.flow_magnitude_cv,
+                         static_cast<float>(r.inliers) / match_out.num_matches,
+                         flow.flow_heading_deg, match_out.num_matches};
+    }
+
+    // Homography fallback on north-up coordinates
+    auto h_result = pose_->solve_homography(match_out.keypoints0, mkpts1_northup, north_meta, res);
+    if (h_result.has_value() && h_result->inliers >= cfg_.min_inliers) {
+        return FineResult{h_result->lat, h_result->lon, h_result->inliers, "homography",
+                         std::nullopt, "satellite", flow.flow_consistency, flow.flow_magnitude_cv,
+                         static_cast<float>(h_result->inliers) / match_out.num_matches,
+                         flow.flow_heading_deg, match_out.num_matches};
+    }
+
+    return std::nullopt;
+}
+
 std::optional<FineResult> ObservationModel::fine_match_on_mosaic(
     const uint8_t* mono_data, int width, int height,
     const cv::Mat& mosaic_rotated,

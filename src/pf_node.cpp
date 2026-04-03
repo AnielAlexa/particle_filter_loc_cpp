@@ -137,7 +137,7 @@ void PFGeoLocNode::image_callback(const sensor_msgs::msg::Image::ConstSharedPtr&
             height = cv_ptr->image.rows;
         }
 
-        process_frame(data, width, height);
+        process_frame(data, width, height, msg->header.stamp);
     } catch (const std::exception& e) {
         RCLCPP_WARN(get_logger(), "Frame processing error: %s", e.what());
     }
@@ -145,7 +145,8 @@ void PFGeoLocNode::image_callback(const sensor_msgs::msg::Image::ConstSharedPtr&
     processing_.store(false);
 }
 
-void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height) {
+void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height,
+                                 const builtin_interfaces::msg::Time& stamp) {
     auto& pf = *pf_;
     auto& obs = *obs_;
 
@@ -181,45 +182,6 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
 
     if (pf.phase() == Phase::UNINIT) return;
 
-    auto [est_e, est_n, est_h] = pf.estimate();
-    double search_radius = pf.get_search_radius();
-
-    // Coarse matching with spatial constraint
-    const std::vector<int>* candidates = nullptr;
-    std::vector<int> candidate_vec;
-    if (pf.phase() != Phase::DISPERSED) {
-        candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius);
-        if (candidate_vec.size() < 5) {
-            candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius * 2.0);
-        }
-        candidates = &candidate_vec;
-        RCLCPP_INFO(get_logger(), "DBG: spatial filter: %zu candidates within r=%.0fm",
-            candidate_vec.size(), search_radius);
-    } else {
-        RCLCPP_INFO(get_logger(), "DBG: DISPERSED — no spatial filter, searching all %d patches",
-            609);
-    }
-
-    RCLCPP_INFO(get_logger(), "DBG: running coarse_match...");
-    auto coarse = obs.coarse_match(mono_data, width, height, candidates, cfg_.pf.top_k_coarse);
-    RCLCPP_INFO(get_logger(), "DBG: coarse_match returned %zu results", coarse.top_k_names.size());
-    for (size_t i = 0; i < coarse.top_k_names.size(); ++i) {
-        RCLCPP_INFO(get_logger(), "DBG:   [%zu] %s sim=%.4f",
-            i, coarse.top_k_names[i].c_str(), coarse.top_k_sims[i]);
-    }
-
-    // Coarse observation update
-    std::vector<std::tuple<double, double, float>> coarse_obs;
-    for (size_t i = 0; i < coarse.top_k_names.size(); ++i) {
-        auto [e, n] = obs.get_patch_center_enu(coarse.top_k_names[i]);
-        coarse_obs.emplace_back(e, n, coarse.top_k_sims[i]);
-    }
-    RCLCPP_INFO(get_logger(), "DBG: calling update_coarse with %zu obs (NOTE: filter drops sim<0.3!)",
-        coarse_obs.size());
-    pf.update_coarse(coarse_obs);
-    RCLCPP_INFO(get_logger(), "DBG: after update_coarse: spread=%.1f ESS=%.0f",
-        pf.weighted_spread(), pf.effective_sample_size());
-
     // Update altitude
     if (!altitude_buf_.empty()) {
         std::vector<float> sorted(altitude_buf_.begin(), altitude_buf_.end());
@@ -227,29 +189,140 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         obs.altitude_m = sorted[sorted.size() / 2];
     }
 
-    // Fine matching
+    auto [est_e, est_n, est_h] = pf.estimate();
+    double search_radius = pf.get_search_radius();
     bool should_fine = pf.should_run_fine();
-    RCLCPP_INFO(get_logger(), "DBG: should_run_fine=%d phase=%s",
-        should_fine, phase_name(pf.phase()));
+    bool fine_succeeded = false;
+
+    // ── Fine frames: try reconstruction-based matching first (no coarse needed) ──
     if (should_fine) {
-        int fine_top_k = pf.get_fine_top_k();
-        double ctx_frac = pf.get_context_fraction();
-        RCLCPP_INFO(get_logger(), "DBG: running fine_match top_k=%d ctx_frac=%.2f", fine_top_k, ctx_frac);
-        for (int i = 0; i < fine_top_k && i < static_cast<int>(coarse.top_k_names.size()); ++i) {
-            RCLCPP_INFO(get_logger(), "DBG:   fine_match on %s...", coarse.top_k_names[i].c_str());
-            auto fine_result = obs.fine_match(mono_data, width, height,
-                                              coarse.top_k_names[i], ctx_frac);
-            if (fine_result.has_value()) {
-                auto [fe, fn] = enu_.wgs84_to_enu(fine_result->lat, fine_result->lon);
-                RCLCPP_INFO(get_logger(), "DBG:   fine OK: inliers=%d method=%s lat=%.6f lon=%.6f",
-                    fine_result->inliers, fine_result->method.c_str(),
-                    fine_result->lat, fine_result->lon);
-                pf.update_fine(fe, fn, fine_result->inliers, fine_result->heading_deg);
-                break;
-            } else {
-                RCLCPP_INFO(get_logger(), "DBG:   fine_match returned nullopt");
+        const int early_exit = cfg_.pf.fine_early_exit_inliers;
+        std::optional<FineResult> best_fine;
+
+        auto [rlat, rlon] = enu_.enu_to_wgs84(est_e, est_n);
+        double heading_for_recon = est_h + cfg_.camera.heading_offset_deg;
+
+        // Build footprint reconstruction
+        std::optional<FootprintReconstruction> fp_recon;
+        if (obs.altitude_m > 20.0) {
+            try {
+                fp_recon = obs.footprint().reconstruct(
+                    rlat, rlon, obs.altitude_m, heading_for_recon,
+                    cfg_.matchers.camera_fx, cfg_.matchers.camera_fy,
+                    cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
+                    cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
+                    2.0);
+            } catch (const std::exception& e) {
+                RCLCPP_WARN(get_logger(), "Recon exception: %s", e.what());
             }
         }
+
+        // Stage A: Satellite perspective-warped (best geometry)
+        if (fp_recon.has_value() && !fp_recon->satellite_crop.empty() && !fp_recon->warp_M_inv.empty()) {
+            auto sat_fine = obs.fine_match_on_satellite(
+                mono_data, width, height,
+                fp_recon->satellite_crop,
+                fp_recon->mosaic_meta,
+                fp_recon->warp_M_inv);
+            if (sat_fine.has_value()) {
+                if (!best_fine || sat_fine->inliers > best_fine->inliers)
+                    best_fine = sat_fine;
+            }
+        }
+
+        // Stage B: Mosaic heading-aligned
+        if ((!best_fine || best_fine->inliers < early_exit) &&
+            fp_recon.has_value() && !fp_recon->mosaic_rotated.empty() && !fp_recon->rot_crop_M_inv.empty()) {
+            auto mosaic_fine = obs.fine_match_on_mosaic(
+                mono_data, width, height,
+                fp_recon->mosaic_rotated,
+                fp_recon->mosaic_meta,
+                fp_recon->rot_crop_M_inv);
+            if (mosaic_fine.has_value()) {
+                if (!best_fine || mosaic_fine->inliers > best_fine->inliers)
+                    best_fine = mosaic_fine;
+            }
+        }
+
+        // If satellite/mosaic succeeded with enough inliers, apply and skip coarse
+        if (best_fine.has_value() && best_fine->inliers >= early_exit) {
+            auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
+            RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s — skip coarse",
+                frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str());
+            pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
+            fine_succeeded = true;
+        }
+
+        // Stage C: Need coarse for single-patch fallback
+        if (!fine_succeeded) {
+            // Run coarse match
+            const std::vector<int>* candidates = nullptr;
+            std::vector<int> candidate_vec;
+            if (pf.phase() != Phase::DISPERSED) {
+                candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius);
+                if (candidate_vec.size() < 5)
+                    candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius * 2.0);
+                candidates = &candidate_vec;
+            }
+            auto coarse = obs.coarse_match(mono_data, width, height, candidates, cfg_.pf.top_k_coarse);
+
+            // Coarse weight update
+            std::vector<std::tuple<double, double, float>> coarse_obs;
+            for (size_t i = 0; i < coarse.top_k_names.size(); ++i) {
+                auto [e, n] = obs.get_patch_center_enu(coarse.top_k_names[i]);
+                coarse_obs.emplace_back(e, n, coarse.top_k_sims[i]);
+            }
+            pf.update_coarse(coarse_obs);
+
+            // Single patch fine (stage C)
+            if (!coarse.top_k_names.empty()) {
+                double ctx_frac = pf.get_context_fraction();
+                int fine_top_k = pf.get_fine_top_k();
+                for (int i = 0; i < fine_top_k && i < static_cast<int>(coarse.top_k_names.size()); ++i) {
+                    auto patch_fine = obs.fine_match(mono_data, width, height,
+                                                      coarse.top_k_names[i], ctx_frac);
+                    if (patch_fine.has_value()) {
+                        if (!best_fine || patch_fine->inliers > best_fine->inliers)
+                            best_fine = patch_fine;
+                        if (best_fine->inliers >= early_exit) break;
+                    }
+                }
+            }
+
+            // Apply best fine result (from any stage)
+            if (best_fine.has_value()) {
+                auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
+                RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse",
+                    frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str());
+                pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
+            }
+
+            RCLCPP_INFO(get_logger(), "F%d %s | top1=%s sim=%.3f | spread=%.1f ESS=%.0f",
+                frame_count_, phase_name(pf.phase()),
+                coarse.top_k_names.empty() ? "?" : coarse.top_k_names[0].c_str(),
+                coarse.top_k_sims.empty() ? 0.f : coarse.top_k_sims[0],
+                pf.weighted_spread(), pf.effective_sample_size());
+        }
+    }
+
+    // ── Non-fine frames: just coarse ──
+    if (!should_fine) {
+        const std::vector<int>* candidates = nullptr;
+        std::vector<int> candidate_vec;
+        if (pf.phase() != Phase::DISPERSED) {
+            candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius);
+            if (candidate_vec.size() < 5)
+                candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius * 2.0);
+            candidates = &candidate_vec;
+        }
+        auto coarse = obs.coarse_match(mono_data, width, height, candidates, cfg_.pf.top_k_coarse);
+
+        std::vector<std::tuple<double, double, float>> coarse_obs;
+        for (size_t i = 0; i < coarse.top_k_names.size(); ++i) {
+            auto [e, n] = obs.get_patch_center_enu(coarse.top_k_names[i]);
+            coarse_obs.emplace_back(e, n, coarse.top_k_sims[i]);
+        }
+        pf.update_coarse(coarse_obs);
     }
 
     pf.resample_if_needed();
@@ -260,7 +333,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     auto [pub_lat, pub_lon] = enu_.enu_to_wgs84(pub_e, pub_n);
 
     sensor_msgs::msg::NavSatFix pos_msg;
-    pos_msg.header.stamp = this->now();
+    pos_msg.header.stamp = stamp;  // use bag timestamp for correct time alignment
     pos_msg.latitude = pub_lat;
     pos_msg.longitude = pub_lon;
     pub_position_->publish(pos_msg);
@@ -274,12 +347,10 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     pub_state_->publish(state_msg);
 
     RCLCPP_INFO(get_logger(),
-        "=== F%d | %s | lat=%.6f lon=%.6f | top1=%s sim=%.3f | ESS=%.0f | spread=%.1f | r=%.0fm ===",
+        "=== F%d | %s | lat=%.6f lon=%.6f | ESS=%.0f | spread=%.1f ===",
         frame_count_, phase_name(pf.phase()),
         pub_lat, pub_lon,
-        coarse.top_k_names.empty() ? "?" : coarse.top_k_names[0].c_str(),
-        coarse.top_k_sims.empty() ? 0.f : coarse.top_k_sims[0],
-        pf.effective_sample_size(), pf.weighted_spread(), search_radius);
+        pf.effective_sample_size(), pf.weighted_spread());
 }
 
 }  // namespace pf

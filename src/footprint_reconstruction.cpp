@@ -144,6 +144,7 @@ std::optional<FootprintReconstruction> SatelliteFootprintReconstructor::reconstr
 
     cv::Mat M = cv::getPerspectiveTransform(src_pts, dst_pts);
     cv::Mat M_inv = cv::getPerspectiveTransform(dst_pts, src_pts);
+
     cv::Mat warped;
     cv::warpPerspective(mosaic, warped, M, output_size);
 

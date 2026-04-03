@@ -43,7 +43,7 @@ private:
     std::tuple<cv::Mat, FlatMeta, std::vector<std::string>> stitch_mosaic(
         double min_lat, double max_lat, double min_lon, double max_lon);
 
-    const std::unordered_map<std::string, PatchMeta>& gps_meta_;
+    std::unordered_map<std::string, PatchMeta> gps_meta_;
     std::string patches_dir_;
     ENUFrame enu_;
 

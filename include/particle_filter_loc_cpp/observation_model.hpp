@@ -29,6 +29,12 @@ public:
                                          const std::string& patch_name,
                                          double context_fraction = 0.2);
 
+    std::optional<FineResult> fine_match_on_satellite(
+        const uint8_t* mono_data, int width, int height,
+        const cv::Mat& satellite_crop,
+        const FlatMeta& mosaic_meta,
+        const cv::Mat& warp_M_inv);
+
     std::optional<FineResult> fine_match_on_mosaic(
         const uint8_t* mono_data, int width, int height,
         const cv::Mat& mosaic_rotated,
