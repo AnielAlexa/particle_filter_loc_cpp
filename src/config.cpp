@@ -144,6 +144,7 @@ FullConfig load_config(const std::string& yaml_path) {
         mc.min_inliers = get(m, "min_inliers", mc.min_inliers);
         mc.ransac_max_iters = get(m, "ransac_max_iters", mc.ransac_max_iters);
         mc.patch_cache_size = get(m, "patch_cache_size", mc.patch_cache_size);
+        mc.mosaic_context_scale = get(m, "mosaic_context_scale", mc.mosaic_context_scale);
     }
 
     // Init

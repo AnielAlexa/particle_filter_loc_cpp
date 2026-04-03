@@ -52,7 +52,28 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
     pub_ess_ = create_publisher<std_msgs::msg::Float32>("/pf_geo_loc/ess", 10);
     pub_state_ = create_publisher<std_msgs::msg::String>("/pf_geo_loc/state", 10);
 
+    // Stats timer — print every 10s
+    stats_timer_ = create_wall_timer(std::chrono::seconds(10),
+        std::bind(&PFGeoLocNode::print_stats, this));
+
     RCLCPP_INFO(get_logger(), "PFGeoLocNode (C++) ready.");
+}
+
+void PFGeoLocNode::print_stats() {
+    if (frame_count_ == 0) return;
+    auto& s = stats_;
+    RCLCPP_INFO(get_logger(),
+        "STATS | frames=%d fine=%d coarse_only=%d | "
+        "sat=%d/%d (avg_inl=%.1f) mosaic=%d/%d (avg_inl=%.1f) patch=%d/%d (avg_inl=%.1f) | "
+        "skip_coarse=%d",
+        frame_count_, s.fine_frames, s.coarse_only,
+        s.satellite_ok, s.satellite_tried,
+        s.satellite_ok > 0 ? (double)s.total_sat_inliers / s.satellite_ok : 0.0,
+        s.mosaic_ok, s.mosaic_tried,
+        s.mosaic_ok > 0 ? (double)s.total_mosaic_inliers / s.mosaic_ok : 0.0,
+        s.patch_ok, s.patch_tried,
+        s.patch_ok > 0 ? (double)s.total_patch_inliers / s.patch_ok : 0.0,
+        s.skip_coarse);
 }
 
 void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& msg) {
@@ -196,6 +217,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
 
     // ── Fine frames: try reconstruction-based matching first (no coarse needed) ──
     if (should_fine) {
+        stats_.fine_frames++;
         const int early_exit = cfg_.pf.fine_early_exit_inliers;
         std::optional<FineResult> best_fine;
 
@@ -211,7 +233,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                     cfg_.matchers.camera_fx, cfg_.matchers.camera_fy,
                     cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
                     cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
-                    2.0);
+                    cfg_.matchers.mosaic_context_scale);
             } catch (const std::exception& e) {
                 RCLCPP_WARN(get_logger(), "Recon exception: %s", e.what());
             }
@@ -219,12 +241,15 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
 
         // Stage A: Satellite perspective-warped (best geometry)
         if (fp_recon.has_value() && !fp_recon->satellite_crop.empty() && !fp_recon->warp_M_inv.empty()) {
+            stats_.satellite_tried++;
             auto sat_fine = obs.fine_match_on_satellite(
                 mono_data, width, height,
                 fp_recon->satellite_crop,
                 fp_recon->mosaic_meta,
                 fp_recon->warp_M_inv);
             if (sat_fine.has_value()) {
+                stats_.satellite_ok++;
+                stats_.total_sat_inliers += sat_fine->inliers;
                 if (!best_fine || sat_fine->inliers > best_fine->inliers)
                     best_fine = sat_fine;
             }
@@ -233,12 +258,15 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         // Stage B: Mosaic heading-aligned
         if ((!best_fine || best_fine->inliers < early_exit) &&
             fp_recon.has_value() && !fp_recon->mosaic_rotated.empty() && !fp_recon->rot_crop_M_inv.empty()) {
+            stats_.mosaic_tried++;
             auto mosaic_fine = obs.fine_match_on_mosaic(
                 mono_data, width, height,
                 fp_recon->mosaic_rotated,
                 fp_recon->mosaic_meta,
                 fp_recon->rot_crop_M_inv);
             if (mosaic_fine.has_value()) {
+                stats_.mosaic_ok++;
+                stats_.total_mosaic_inliers += mosaic_fine->inliers;
                 if (!best_fine || mosaic_fine->inliers > best_fine->inliers)
                     best_fine = mosaic_fine;
             }
@@ -251,6 +279,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str());
             pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
             fine_succeeded = true;
+            stats_.skip_coarse++;
         }
 
         // Stage C: Need coarse for single-patch fallback
@@ -276,6 +305,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
 
             // Single patch fine (stage C)
             if (!coarse.top_k_names.empty()) {
+                stats_.patch_tried++;
                 double ctx_frac = pf.get_context_fraction();
                 int fine_top_k = pf.get_fine_top_k();
                 for (int i = 0; i < fine_top_k && i < static_cast<int>(coarse.top_k_names.size()); ++i) {
@@ -291,22 +321,22 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
 
             // Apply best fine result (from any stage)
             if (best_fine.has_value()) {
+                // Track which stage won
+                if (best_fine->patch_name == "satellite") { /* already counted */ }
+                else if (best_fine->patch_name == "mosaic") { /* already counted */ }
+                else { stats_.patch_ok++; stats_.total_patch_inliers += best_fine->inliers; }
+
                 auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
                 RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse",
                     frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str());
                 pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
             }
-
-            RCLCPP_INFO(get_logger(), "F%d %s | top1=%s sim=%.3f | spread=%.1f ESS=%.0f",
-                frame_count_, phase_name(pf.phase()),
-                coarse.top_k_names.empty() ? "?" : coarse.top_k_names[0].c_str(),
-                coarse.top_k_sims.empty() ? 0.f : coarse.top_k_sims[0],
-                pf.weighted_spread(), pf.effective_sample_size());
         }
     }
 
     // ── Non-fine frames: just coarse ──
     if (!should_fine) {
+        stats_.coarse_only++;
         const std::vector<int>* candidates = nullptr;
         std::vector<int> candidate_vec;
         if (pf.phase() != Phase::DISPERSED) {

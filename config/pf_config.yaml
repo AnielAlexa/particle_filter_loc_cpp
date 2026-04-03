@@ -149,6 +149,7 @@ matchers:
   fine_conf_threshold: 0.20
   min_inliers_ransac: 4
   min_inliers: 8
+  mosaic_context_scale: 1.5       # mosaic crop = footprint_diagonal * this (lower = higher res)
 
 init:
   lock_n_frames: 4          # consecutive top-1 hits before seeding

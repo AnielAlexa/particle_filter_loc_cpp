@@ -116,6 +116,7 @@ struct MatcherConfig {
     int min_inliers = 8;
     int ransac_max_iters = 1000;
     int patch_cache_size = 100;
+    double mosaic_context_scale = 1.5;  // mosaic crop = footprint_diagonal * this
 };
 
 struct InitConfig {

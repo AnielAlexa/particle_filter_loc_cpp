@@ -64,6 +64,19 @@ private:
     int frame_count_ = 0;
     double gt_lat_ = 0, gt_lon_ = 0;
     bool has_gt_ = false;
+
+    // Stats
+    struct FineStats {
+        int satellite_ok = 0, satellite_tried = 0;
+        int mosaic_ok = 0, mosaic_tried = 0;
+        int patch_ok = 0, patch_tried = 0;
+        int fine_frames = 0;      // frames where fine was attempted
+        int coarse_only = 0;      // frames with only coarse
+        int skip_coarse = 0;      // fine frames that skipped coarse
+        int total_sat_inliers = 0, total_mosaic_inliers = 0, total_patch_inliers = 0;
+    } stats_;
+    rclcpp::TimerBase::SharedPtr stats_timer_;
+    void print_stats();
 };
 
 }  // namespace pf
