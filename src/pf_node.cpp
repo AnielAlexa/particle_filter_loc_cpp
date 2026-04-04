@@ -358,25 +358,9 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         }
     }
 
-    // ── Non-fine frames: just coarse ──
+    // ── Non-fine frames: coast on RTK predict only (no coarse) ──
     if (!should_fine) {
         stats_.coarse_only++;
-        const std::vector<int>* candidates = nullptr;
-        std::vector<int> candidate_vec;
-        if (pf.phase() != Phase::DISPERSED) {
-            candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius);
-            if (candidate_vec.size() < 5)
-                candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius * 2.0);
-            candidates = &candidate_vec;
-        }
-        auto coarse = obs.coarse_match(mono_data, width, height, candidates, cfg_.pf.top_k_coarse);
-
-        std::vector<std::tuple<double, double, float>> coarse_obs;
-        for (size_t i = 0; i < coarse.top_k_names.size(); ++i) {
-            auto [e, n] = obs.get_patch_center_enu(coarse.top_k_names[i]);
-            coarse_obs.emplace_back(e, n, coarse.top_k_sims[i]);
-        }
-        pf.update_coarse(coarse_obs);
     }
 
     pf.resample_if_needed();
