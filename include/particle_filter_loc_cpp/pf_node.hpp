@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <deque>
+#include <fstream>
 #include <memory>
 #include <mutex>
 
@@ -77,6 +78,23 @@ private:
     } stats_;
     rclcpp::TimerBase::SharedPtr stats_timer_;
     void print_stats();
+
+    // Diagnostic CSV
+    std::ofstream diag_csv_;
+    void init_diag_csv();
+    void log_diag_row(const builtin_interfaces::msg::Time& stamp,
+                      int phase, double est_e, double est_n, double est_h,
+                      double spread, double ess,
+                      double top1_sim, int n_coarse_candidates,
+                      const std::string& fine_source, int fine_inliers,
+                      double fine_corr_dist, float flow_consistency,
+                      float flow_mag_cv, float inlier_ratio,
+                      double drift_factor, double corr_ema,
+                      double sigma_pos, double sigma_obs_fine,
+                      double roughen, double rtk_lat, double rtk_lon,
+                      double pnp_altitude, double baro_altitude,
+                      const std::string& fine_method,
+                      double fine_lat = 0.0, double fine_lon = 0.0);
 };
 
 }  // namespace pf

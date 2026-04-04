@@ -38,6 +38,7 @@ struct FineResult {
     float inlier_ratio = 0.0f;
     std::optional<float> flow_heading_deg;
     int n_total_matches = 0;
+    double pnp_altitude = 0.0;  // PnP-estimated altitude (0 = homography, no estimate)
 };
 
 // ─── Particle filter phases ─────────────────────────────────────

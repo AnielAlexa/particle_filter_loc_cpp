@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iomanip>
 #include <numeric>
 
 #include <cv_bridge/cv_bridge.h>
@@ -57,7 +58,72 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
     stats_timer_ = create_wall_timer(std::chrono::seconds(10),
         std::bind(&PFGeoLocNode::print_stats, this));
 
+    init_diag_csv();
     RCLCPP_INFO(get_logger(), "PFGeoLocNode (C++) ready.");
+}
+
+void PFGeoLocNode::init_diag_csv() {
+    std::string path = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/results/pf_diag.csv";
+    diag_csv_.open(path, std::ios::trunc);
+    if (diag_csv_.is_open()) {
+        diag_csv_ << "timestamp,frame,phase,est_e,est_n,est_h,"
+                  << "spread,ess,top1_sim,n_coarse_cand,"
+                  << "fine_source,fine_inliers,fine_corr_dist,"
+                  << "flow_consistency,flow_mag_cv,inlier_ratio,"
+                  << "drift_factor,corr_ema,sigma_pos,sigma_obs_fine,roughen,"
+                  << "rtk_lat,rtk_lon,pnp_alt,baro_alt,fine_method,"
+                  << "fine_lat,fine_lon,fine_gt_err\n";
+        RCLCPP_INFO(get_logger(), "Diagnostic CSV: %s", path.c_str());
+    }
+}
+
+void PFGeoLocNode::log_diag_row(
+    const builtin_interfaces::msg::Time& stamp,
+    int phase, double est_e, double est_n, double est_h,
+    double spread, double ess,
+    double top1_sim, int n_coarse_candidates,
+    const std::string& fine_source, int fine_inliers,
+    double fine_corr_dist, float flow_consistency,
+    float flow_mag_cv, float inlier_ratio,
+    double drift_factor, double corr_ema,
+    double sigma_pos, double sigma_obs_fine,
+    double roughen, double rtk_lat, double rtk_lon,
+    double pnp_altitude, double baro_altitude,
+    const std::string& fine_method,
+    double fine_lat, double fine_lon)
+{
+    if (!diag_csv_.is_open()) return;
+    double ts = stamp.sec + stamp.nanosec * 1e-9;
+
+    // Compute raw fine match error vs RTK ground truth
+    double fine_gt_err = 0.0;
+    if (fine_lat != 0.0 && rtk_lat != 0.0) {
+        double cos_lat = std::cos(rtk_lat * M_PI / 180.0);
+        double de = (fine_lon - rtk_lon) * cos_lat * 111319.5;
+        double dn = (fine_lat - rtk_lat) * 111319.5;
+        fine_gt_err = std::sqrt(de * de + dn * dn);
+    }
+
+    diag_csv_ << std::fixed << std::setprecision(3) << ts << ","
+              << frame_count_ << "," << phase << ","
+              << std::setprecision(2) << est_e << "," << est_n << ","
+              << std::setprecision(1) << est_h << ","
+              << spread << "," << std::setprecision(0) << ess << ","
+              << std::setprecision(4) << top1_sim << ","
+              << n_coarse_candidates << ","
+              << fine_source << "," << fine_inliers << ","
+              << std::setprecision(2) << fine_corr_dist << ","
+              << std::setprecision(3) << flow_consistency << ","
+              << flow_mag_cv << "," << inlier_ratio << ","
+              << std::setprecision(4) << drift_factor << ","
+              << std::setprecision(2) << corr_ema << ","
+              << sigma_pos << "," << sigma_obs_fine << "," << roughen << ","
+              << std::setprecision(8) << rtk_lat << "," << rtk_lon << ","
+              << std::setprecision(1) << pnp_altitude << "," << baro_altitude << ","
+              << fine_method << ","
+              << std::setprecision(8) << fine_lat << "," << fine_lon << ","
+              << std::setprecision(2) << fine_gt_err << "\n";
+    diag_csv_.flush();
 }
 
 void PFGeoLocNode::print_stats() {
@@ -239,6 +305,17 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     bool should_fine = pf.should_run_fine();
     bool fine_succeeded = false;
 
+    // Diagnostic accumulators
+    double diag_top1_sim = 0.0;
+    int diag_n_coarse_cand = 0;
+    std::string diag_fine_source = "none";
+    std::string diag_fine_method = "none";
+    int diag_fine_inliers = 0;
+    double diag_corr_dist = 0.0;
+    double diag_pnp_alt = 0.0;
+    double diag_fine_lat = 0.0, diag_fine_lon = 0.0;
+    float diag_flow_con = 0.0f, diag_flow_cv = 0.0f, diag_inl_ratio = 0.0f;
+
     // ── Fine frames: try reconstruction-based matching first (no coarse needed) ──
     if (should_fine) {
         stats_.fine_frames++;
@@ -296,14 +373,38 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             }
         }
 
+        // Homography gate: no altitude check, so cap correction distance
+        auto homography_gate = [&](const FineResult& fr, double corr_d) -> bool {
+            if (fr.method != "homography") return true;  // PnP already altitude-gated
+            return corr_d <= cfg_.pf.fine_consistency_max_m;
+        };
+
         // If satellite/mosaic succeeded with enough inliers, apply and skip coarse
         if (best_fine.has_value() && best_fine->inliers >= early_exit) {
             auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
-            RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s — skip coarse",
-                frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str());
-            pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
-            fine_succeeded = true;
-            stats_.skip_coarse++;
+            double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
+            if (homography_gate(*best_fine, corr_dist)) {
+                if (best_fine->inliers >= cfg_.pf.adaptive_min_inliers)
+                    pf.feed_correction_distance(corr_dist);
+                RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s — skip coarse (drift=%.2f)",
+                    frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
+                pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
+                fine_succeeded = true;
+                stats_.skip_coarse++;
+                diag_fine_source = best_fine->patch_name;
+                diag_fine_method = best_fine->method;
+                diag_fine_inliers = best_fine->inliers;
+                diag_corr_dist = corr_dist;
+                diag_pnp_alt = best_fine->pnp_altitude;
+                diag_fine_lat = best_fine->lat;
+                diag_fine_lon = best_fine->lon;
+                diag_flow_con = best_fine->flow_consistency;
+                diag_flow_cv = best_fine->flow_magnitude_cv;
+                diag_inl_ratio = best_fine->inlier_ratio;
+            } else {
+                RCLCPP_WARN(get_logger(), "F%d homography gate REJECTED %s corr=%.1fm (max=%.0fm)",
+                    frame_count_, best_fine->patch_name.c_str(), corr_dist, cfg_.pf.fine_consistency_max_m);
+            }
         }
 
         // Stage C: Need coarse for single-patch fallback
@@ -326,6 +427,9 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 coarse_obs.emplace_back(e, n, coarse.top_k_sims[i]);
             }
             pf.update_coarse(coarse_obs);
+            if (!coarse.top_k_sims.empty())
+                diag_top1_sim = coarse.top_k_sims[0];
+            diag_n_coarse_cand = static_cast<int>(coarse.top_k_names.size());
 
             // Single patch fine (stage C)
             if (!coarse.top_k_names.empty()) {
@@ -351,9 +455,27 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 else { stats_.patch_ok++; stats_.total_patch_inliers += best_fine->inliers; }
 
                 auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
-                RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse",
-                    frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str());
-                pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
+                double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
+                if (homography_gate(*best_fine, corr_dist)) {
+                    if (best_fine->inliers >= cfg_.pf.adaptive_min_inliers)
+                        pf.feed_correction_distance(corr_dist);
+                    RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse (drift=%.2f)",
+                        frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
+                    pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
+                    diag_fine_source = best_fine->patch_name;
+                    diag_fine_method = best_fine->method;
+                    diag_fine_inliers = best_fine->inliers;
+                    diag_corr_dist = corr_dist;
+                    diag_pnp_alt = best_fine->pnp_altitude;
+                    diag_fine_lat = best_fine->lat;
+                    diag_fine_lon = best_fine->lon;
+                    diag_flow_con = best_fine->flow_consistency;
+                    diag_flow_cv = best_fine->flow_magnitude_cv;
+                    diag_inl_ratio = best_fine->inlier_ratio;
+                } else {
+                    RCLCPP_WARN(get_logger(), "F%d homography gate REJECTED %s corr=%.1fm (max=%.0fm)",
+                        frame_count_, best_fine->patch_name.c_str(), corr_dist, cfg_.pf.fine_consistency_max_m);
+                }
             }
         }
     }
@@ -365,6 +487,13 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
 
     pf.resample_if_needed();
     pf.check_transitions();
+
+    // Adaptive regime debug (every 3s)
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 3000,
+        "[ADAPTIVE] drift_factor=%.3f corr_ema=%.2f sigma_pos=%.2f sigma_obs_fine=%.2f roughen=%.2f spread=%.1f phase=%d",
+        pf.drift_factor(), pf.correction_ema(), pf.adaptive_sigma_pos(),
+        pf.adaptive_sigma_obs_fine(), pf.adaptive_roughen_scale(),
+        pf.weighted_spread(), static_cast<int>(pf.phase()));
 
     // Publish estimate
     auto [pub_e, pub_n, pub_hdg] = pf.estimate();
@@ -384,6 +513,18 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     std_msgs::msg::String state_msg;
     state_msg.data = phase_name(pf.phase());
     pub_state_->publish(state_msg);
+
+    // Diagnostic CSV row
+    log_diag_row(stamp, static_cast<int>(pf.phase()), pub_e, pub_n, pub_hdg,
+                 pf.weighted_spread(), pf.effective_sample_size(),
+                 diag_top1_sim, diag_n_coarse_cand,
+                 diag_fine_source, diag_fine_inliers, diag_corr_dist,
+                 diag_flow_con, diag_flow_cv, diag_inl_ratio,
+                 pf.drift_factor(), pf.correction_ema(),
+                 pf.adaptive_sigma_pos(), pf.adaptive_sigma_obs_fine(),
+                 pf.adaptive_roughen_scale(), gt_lat_, gt_lon_,
+                 diag_pnp_alt, obs.altitude_m, diag_fine_method,
+                 diag_fine_lat, diag_fine_lon);
 
     RCLCPP_INFO(get_logger(),
         "=== F%d | %s | lat=%.6f lon=%.6f | ESS=%.0f | spread=%.1f ===",

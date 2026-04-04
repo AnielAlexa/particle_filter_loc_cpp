@@ -341,7 +341,7 @@ bool ParticleFilter::update_fine(
     if (sigma_override.has_value()) {
         sigma = sigma_override.value();
     } else {
-        double base = cfg_.sigma_obs_fine;
+        double base = adaptive_sigma_obs_fine();
         if (inliers > 40) sigma = base * 0.3;
         else if (inliers > 25) sigma = base * 0.5;
         else if (inliers > 15) sigma = base;
@@ -398,15 +398,15 @@ bool ParticleFilter::update_fine(
 void ParticleFilter::feed_correction_distance(double correction_dist_m) {
     if (!cfg_.adaptive_enabled) return;
     double alpha = cfg_.adaptive_ema_alpha;
-    double spread = std::max(weighted_spread(), 1.0);
-    double signal = correction_dist_m / spread;
-    correction_ema_ = alpha * signal + (1.0 - alpha) * correction_ema_;
-    double low = cfg_.adaptive_drift_low_m;
-    double high = cfg_.adaptive_drift_high_m;
-    if (high <= low)
+    correction_ema_ = alpha * correction_dist_m + (1.0 - alpha) * correction_ema_;
+    // Noise floor: fine-match position noise (~2-5m) is not drift.
+    // Only ramp drift_factor above the floor.
+    double floor = cfg_.adaptive_drift_floor_m;
+    double ref = cfg_.adaptive_drift_ref_m;
+    if (ref <= floor)
         drift_factor_ = 0.0;
     else
-        drift_factor_ = clamp((correction_ema_ - low) / (high - low), 0.0, 1.0);
+        drift_factor_ = clamp((correction_ema_ - floor) / (ref - floor), 0.0, 1.0);
 }
 
 double ParticleFilter::adaptive_sigma_pos() const {

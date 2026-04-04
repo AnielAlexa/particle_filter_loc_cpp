@@ -82,7 +82,7 @@ std::optional<PnPResult> PoseEstimator::solve_pnp(
 
     // Altitude sanity check
     double pnp_alt = cam_pos(2);
-    if (altitude_m_ > 0 && std::abs(pnp_alt - altitude_m_) > altitude_m_ * 0.5)
+    if (altitude_m_ > 0 && std::abs(pnp_alt - altitude_m_) > altitude_m_ * 0.4)
         return std::nullopt;
 
     double cam_lat = center_lat + cam_pos(1) / 111319.5;
@@ -95,6 +95,7 @@ std::optional<PnPResult> PoseEstimator::solve_pnp(
     result.lon = cam_lon;
     result.heading_deg = heading;
     result.inliers = n_inliers;
+    result.estimated_altitude = pnp_alt;
     result.inlier_mask.resize(n);
     for (int i = 0; i < n; ++i) result.inlier_mask[i] = inlier_mask[i] != 0;
     return result;
@@ -160,7 +161,7 @@ std::optional<PnPResult> PoseEstimator::solve_pnp(
     double cz = cam_pos_cv.at<double>(2);
 
     if (!std::isfinite(cx) || !std::isfinite(cy_pos)) return std::nullopt;
-    if (altitude_m_ > 0 && std::abs(cz - altitude_m_) > altitude_m_ * 0.5)
+    if (altitude_m_ > 0 && std::abs(cz - altitude_m_) > altitude_m_ * 0.4)
         return std::nullopt;
 
     double cam_lat = center_lat + cy_pos / 111319.5;
@@ -173,6 +174,7 @@ std::optional<PnPResult> PoseEstimator::solve_pnp(
     result.lon = cam_lon;
     result.heading_deg = heading;
     result.inliers = inlier_idx.rows;
+    result.estimated_altitude = cz;
     result.inlier_mask.resize(n, false);
     for (int i = 0; i < inlier_idx.rows; ++i)
         result.inlier_mask[inlier_idx.at<int>(i)] = true;

@@ -13,6 +13,7 @@ struct PnPResult {
     double lat, lon;
     double heading_deg;
     int inliers;
+    double estimated_altitude = 0.0;
     std::vector<bool> inlier_mask;
 };
 

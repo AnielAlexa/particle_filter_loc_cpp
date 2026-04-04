@@ -67,6 +67,8 @@ public:
     // State
     Phase phase() const { return phase_; }
     bool is_static() const { return is_static_; }
+    double drift_factor() const { return drift_factor_; }
+    double correction_ema() const { return correction_ema_; }
     int num_particles() const { return particles_.rows(); }
     const Eigen::MatrixXd& particles() const { return particles_; }
     const Eigen::VectorXd& weights() const { return weights_; }

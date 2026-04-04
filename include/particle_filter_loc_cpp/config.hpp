@@ -41,10 +41,11 @@ struct PFConfig {
     double likelihood_nu = 5.0;
     bool adaptive_enabled = true;
     double adaptive_ema_alpha = 0.2;
-    double adaptive_drift_low_m = 2.0;
-    double adaptive_drift_high_m = 4.0;
+    double adaptive_drift_floor_m = 4.0;
+    double adaptive_drift_ref_m = 10.0;
+    int adaptive_min_inliers = 15;
     double adaptive_sigma_pos_rtk = 0.5;
-    double adaptive_sigma_obs_fine_rtk = 15.0;
+    double adaptive_sigma_obs_fine_rtk = 5.0;
     double adaptive_roughen_scale_rtk = 0.5;
     double adaptive_sigma_pos_vio = 3.0;
     double adaptive_sigma_obs_fine_vio = 5.0;

@@ -71,8 +71,9 @@ FullConfig load_config(const std::string& yaml_path) {
         pf.likelihood_nu = get(p, "likelihood_nu", pf.likelihood_nu);
         pf.adaptive_enabled = get(p, "adaptive_enabled", pf.adaptive_enabled);
         pf.adaptive_ema_alpha = get(p, "adaptive_ema_alpha", pf.adaptive_ema_alpha);
-        pf.adaptive_drift_low_m = get(p, "adaptive_drift_low_m", pf.adaptive_drift_low_m);
-        pf.adaptive_drift_high_m = get(p, "adaptive_drift_high_m", pf.adaptive_drift_high_m);
+        pf.adaptive_drift_floor_m = get(p, "adaptive_drift_floor_m", pf.adaptive_drift_floor_m);
+        pf.adaptive_drift_ref_m = get(p, "adaptive_drift_ref_m", pf.adaptive_drift_ref_m);
+        pf.adaptive_min_inliers = get(p, "adaptive_min_inliers", pf.adaptive_min_inliers);
         pf.adaptive_sigma_pos_rtk = get(p, "adaptive_sigma_pos_rtk", pf.adaptive_sigma_pos_rtk);
         pf.adaptive_sigma_obs_fine_rtk = get(p, "adaptive_sigma_obs_fine_rtk", pf.adaptive_sigma_obs_fine_rtk);
         pf.adaptive_roughen_scale_rtk = get(p, "adaptive_roughen_scale_rtk", pf.adaptive_roughen_scale_rtk);

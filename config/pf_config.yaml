@@ -54,10 +54,11 @@ particle_filter:
   # observed correction magnitudes. When disabled, uses static values above.
   adaptive_enabled: true
   adaptive_ema_alpha: 0.2
-  adaptive_drift_low_m: 2.0            # correction/spread ratio EMA below this = RTK
-  adaptive_drift_high_m: 4.0           # correction/spread ratio EMA above this = VIO
+  adaptive_drift_floor_m: 4.0           # correction EMA below this = fine-match noise, not drift
+  adaptive_drift_ref_m: 10.0            # correction EMA at this value = full VIO params
+  adaptive_min_inliers: 15              # only feed corrections with >= this many inliers
   adaptive_sigma_pos_rtk: 0.5
-  adaptive_sigma_obs_fine_rtk: 15.0
+  adaptive_sigma_obs_fine_rtk: 5.0
   adaptive_roughen_scale_rtk: 0.5
   adaptive_sigma_pos_vio: 3.0
   adaptive_sigma_obs_fine_vio: 5.0
