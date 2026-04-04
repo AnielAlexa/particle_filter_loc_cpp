@@ -69,16 +69,16 @@ trust:
   recon_sim_enabled: false
   # Signal weights (must sum to 1.0); agreement+temporal removed — redistributed
   inlier_tau: 25.0
-  inlier_weight: 0.39
+  inlier_weight: 0.43
   sim_floor: 0.10
   sim_ceiling: 0.55
-  sim_weight: 0.22
+  sim_weight: 0.15
   consistency_weight: 0.11
   consistency_min_radius_m: 30.0
   altitude_weight: 0.11
   altitude_ref_m: 60.0
   # Signal 7: Inlier flow geometry
-  geometry_weight: 0.17
+  geometry_weight: 0.20
   # Sigma modulation
   sigma_min_scale: 0.3           # combo_F: wider range (was 0.5)
   sigma_max_scale: 5.0           # combo_F: (was 3.0)

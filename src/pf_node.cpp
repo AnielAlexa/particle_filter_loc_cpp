@@ -372,6 +372,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
 
     sensor_msgs::msg::NavSatFix pos_msg;
     pos_msg.header.stamp = stamp;  // use bag timestamp for correct time alignment
+    pos_msg.header.frame_id = "gps_rtk_antenna";
     pos_msg.latitude = pub_lat;
     pos_msg.longitude = pub_lon;
     pub_position_->publish(pos_msg);

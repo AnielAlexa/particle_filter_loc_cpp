@@ -68,6 +68,9 @@ class PositionPlotter(Node):
         # Log counter
         self.log_timer = self.create_timer(5.0, self.log_status)
 
+        # Live display timer
+        self.display_timer = self.create_timer(1.0, self.update_display)
+
         self.get_logger().info(f"Plotter ready. Ctrl+C to save final image to {OUTPUT_PATH}")
 
     def _build_mosaic(self):
@@ -152,11 +155,16 @@ class PositionPlotter(Node):
         self.get_logger().info(
             f"Collecting... RTK={len(self.rtk_positions)} PF={len(self.pf_positions)} state={self.pf_state}")
 
-    def save_plot(self):
+    def update_display(self):
+        """Redraw live OpenCV window."""
         if not self.pf_positions and not self.rtk_positions:
-            self.get_logger().warn("No positions collected, nothing to save")
             return
+        img = self._render()
+        cv2.imshow("PF Live Trajectory", img)
+        cv2.waitKey(1)
 
+    def _render(self):
+        """Render current trajectories onto mosaic background."""
         img = self.bg_img.copy()
 
         # Draw RTK trail (green)
@@ -164,11 +172,9 @@ class PositionPlotter(Node):
             pts = [self._latlon_to_px(lat, lon) for lat, lon, _ in self.rtk_positions]
             for i in range(1, len(pts)):
                 cv2.line(img, pts[i - 1], pts[i], (0, 220, 0), 2, cv2.LINE_AA)
-            # Start marker
             cv2.circle(img, pts[0], 10, (0, 255, 0), 2, cv2.LINE_AA)
             cv2.putText(img, "S", (pts[0][0] - 5, pts[0][1] + 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, cv2.LINE_AA)
-            # End marker
             cv2.circle(img, pts[-1], 8, (0, 255, 0), -1, cv2.LINE_AA)
             cv2.circle(img, pts[-1], 8, (255, 255, 255), 2, cv2.LINE_AA)
 
@@ -181,19 +187,7 @@ class PositionPlotter(Node):
             cv2.circle(img, pts[-1], 8, (255, 255, 255), 2, cv2.LINE_AA)
 
         # Compute errors
-        errors = []
-        if self.rtk_positions and self.pf_positions:
-            rtk_arr = np.array([(lat, lon) for lat, lon, _ in self.rtk_positions])
-            pf_arr = np.array([(lat, lon) for lat, lon, _ in self.pf_positions])
-            rtk_times = np.array([t for _, _, t in self.rtk_positions])
-            pf_times = np.array([t for _, _, t in self.pf_positions])
-
-            for plat, plon, pt in self.pf_positions:
-                idx = np.argmin(np.abs(rtk_times - pt))
-                rlat, rlon = rtk_arr[idx]
-                dlat = (plat - rlat) * 111320
-                dlon = (plon - rlon) * 111320 * np.cos(np.radians(rlat))
-                errors.append(np.sqrt(dlat ** 2 + dlon ** 2))
+        errors = self._compute_errors()
 
         # Legend
         y0 = 30
@@ -201,19 +195,42 @@ class PositionPlotter(Node):
                     0.6, (0, 220, 0), 2, cv2.LINE_AA)
         cv2.putText(img, "PF (estimated)", (15, y0 + 25), cv2.FONT_HERSHEY_SIMPLEX,
                     0.6, (0, 0, 255), 2, cv2.LINE_AA)
+        cv2.putText(img, f"State: {self.pf_state}", (15, y0 + 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
         cv2.putText(img, f"RTK: {len(self.rtk_positions)} | PF: {len(self.pf_positions)} pts",
-                    (15, y0 + 55), cv2.FONT_HERSHEY_SIMPLEX,
+                    (15, y0 + 75), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, (200, 200, 200), 1, cv2.LINE_AA)
 
         if errors:
             median_err = np.median(errors)
             mean_err = np.mean(errors)
             max_err = np.max(errors)
-            cv2.putText(img, f"Median error: {median_err:.1f}m", (15, y0 + 80),
+            cv2.putText(img, f"Median error: {median_err:.1f}m", (15, y0 + 100),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
-            cv2.putText(img, f"Mean: {mean_err:.1f}m | Max: {max_err:.1f}m", (15, y0 + 105),
+            cv2.putText(img, f"Mean: {mean_err:.1f}m | Max: {max_err:.1f}m", (15, y0 + 125),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
 
+        return img
+
+    def _compute_errors(self):
+        errors = []
+        if self.rtk_positions and self.pf_positions:
+            rtk_arr = np.array([(lat, lon) for lat, lon, _ in self.rtk_positions])
+            rtk_times = np.array([t for _, _, t in self.rtk_positions])
+            for plat, plon, pt in self.pf_positions:
+                idx = np.argmin(np.abs(rtk_times - pt))
+                rlat, rlon = rtk_arr[idx]
+                dlat = (plat - rlat) * 111320
+                dlon = (plon - rlon) * 111320 * np.cos(np.radians(rlat))
+                errors.append(np.sqrt(dlat ** 2 + dlon ** 2))
+        return errors
+
+    def save_plot(self):
+        if not self.pf_positions and not self.rtk_positions:
+            self.get_logger().warn("No positions collected, nothing to save")
+            return
+
+        img = self._render()
         cv2.imwrite(OUTPUT_PATH, img)
 
         # Save CSV
@@ -240,6 +257,7 @@ def main(args=None):
     finally:
         # Final save
         node.save_plot()
+        cv2.destroyAllWindows()
         node.get_logger().info(f"Final plot saved to {OUTPUT_PATH}")
         node.get_logger().info(f"CSV saved to {CSV_PATH}")
         node.destroy_node()
