@@ -331,8 +331,8 @@ bool ParticleFilter::update_fine(
         double dist = std::sqrt((fine_east - est_e) * (fine_east - est_e) +
                                 (fine_north - est_n) * (fine_north - est_n));
         double max_dist = cfg_.fine_consistency_max_m;
-        if (inliers > 40) max_dist *= 4.0;
-        else if (inliers > 25) max_dist *= 2.0;
+        if (inliers > 40) max_dist *= 2.0;
+        else if (inliers > 25) max_dist *= 1.5;
         if (dist > max_dist) return false;
     }
 
@@ -342,8 +342,9 @@ bool ParticleFilter::update_fine(
         sigma = sigma_override.value();
     } else {
         double base = adaptive_sigma_obs_fine();
-        if (inliers > 40) sigma = base * 0.3;
-        else if (inliers > 25) sigma = base * 0.5;
+        if (inliers > 60) sigma = base * 0.3;
+        else if (inliers > 40) sigma = base * 0.5;
+        else if (inliers > 25) sigma = base * 0.7;
         else if (inliers > 15) sigma = base;
         else sigma = base * 2.0;
     }

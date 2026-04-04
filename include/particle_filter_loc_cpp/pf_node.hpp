@@ -94,7 +94,9 @@ private:
                       double roughen, double rtk_lat, double rtk_lon,
                       double pnp_altitude, double baro_altitude,
                       const std::string& fine_method,
-                      double fine_lat = 0.0, double fine_lon = 0.0);
+                      double fine_lat = 0.0, double fine_lon = 0.0,
+                      int sat_inliers = 0, double sat_lat = 0.0, double sat_lon = 0.0, const std::string& sat_method = "",
+                      int mos_inliers = 0, double mos_lat = 0.0, double mos_lon = 0.0, const std::string& mos_method = "");
 };
 
 }  // namespace pf

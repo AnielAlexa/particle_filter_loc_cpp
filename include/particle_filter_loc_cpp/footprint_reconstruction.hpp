@@ -36,7 +36,8 @@ public:
         double altitude_m, double heading_deg,
         double fx, double fy, int img_w, int img_h,
         cv::Size output_size = {640, 480},
-        double mosaic_context_scale = 2.0);
+        double mosaic_context_scale = 2.0,
+        double satellite_context_scale = 1.0);
 
 private:
     cv::Mat load_tile(const std::string& name);

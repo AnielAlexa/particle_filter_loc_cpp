@@ -243,15 +243,6 @@ std::optional<FineResult> ObservationModel::fine_match(
         }
     }
 
-    // Homography fallback (no altitude gate — use PF consistency gate in update_fine)
-    auto h_result = pose_->solve_homography(match_out.keypoints0, match_out.keypoints1, flat_meta, res);
-    if (h_result.has_value() && h_result->inliers >= cfg_.min_inliers) {
-        return FineResult{h_result->lat, h_result->lon, h_result->inliers, "homography",
-                         std::nullopt, patch_name, flow.flow_consistency, flow.flow_magnitude_cv,
-                         static_cast<float>(h_result->inliers) / match_out.num_matches,
-                         flow.flow_heading_deg, match_out.num_matches};
-    }
-
     return std::nullopt;
 }
 
@@ -300,13 +291,14 @@ std::optional<FineResult> ObservationModel::fine_match_on_satellite(
                          flow.flow_heading_deg, match_out.num_matches, r.estimated_altitude};
     }
 
-    // Homography fallback on north-up coordinates
-    auto h_result = pose_->solve_homography(match_out.keypoints0, mkpts1_northup, north_meta, res);
-    if (h_result.has_value() && h_result->inliers >= cfg_.min_inliers) {
-        return FineResult{h_result->lat, h_result->lon, h_result->inliers, "homography",
-                         std::nullopt, "satellite", flow.flow_consistency, flow.flow_magnitude_cv,
-                         static_cast<float>(h_result->inliers) / match_out.num_matches,
-                         flow.flow_heading_deg, match_out.num_matches};
+    // Homography fallback
+    auto homo_result = pose_->solve_homography(match_out.keypoints0, mkpts1_northup, north_meta, res);
+    if (homo_result.has_value() && homo_result->inliers >= cfg_.min_inliers) {
+        auto& r = homo_result.value();
+        return FineResult{r.lat, r.lon, r.inliers, "homography", std::nullopt,
+                         "satellite", flow.flow_consistency, flow.flow_magnitude_cv,
+                         static_cast<float>(r.inliers) / match_out.num_matches,
+                         flow.flow_heading_deg, match_out.num_matches, 0.0};
     }
 
     return std::nullopt;
@@ -353,15 +345,6 @@ std::optional<FineResult> ObservationModel::fine_match_on_mosaic(
                          "mosaic", flow.flow_consistency, flow.flow_magnitude_cv,
                          static_cast<float>(r.inliers) / match_out.num_matches,
                          flow.flow_heading_deg, match_out.num_matches, r.estimated_altitude};
-    }
-
-    // Homography fallback on north-up coordinates
-    auto h_result = pose_->solve_homography(match_out.keypoints0, mkpts1_northup, north_meta, res);
-    if (h_result.has_value() && h_result->inliers >= cfg_.min_inliers) {
-        return FineResult{h_result->lat, h_result->lon, h_result->inliers, "homography",
-                         std::nullopt, "mosaic", flow.flow_consistency, flow.flow_magnitude_cv,
-                         static_cast<float>(h_result->inliers) / match_out.num_matches,
-                         flow.flow_heading_deg, match_out.num_matches};
     }
 
     return std::nullopt;

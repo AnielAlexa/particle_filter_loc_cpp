@@ -103,13 +103,22 @@ std::optional<FootprintReconstruction> SatelliteFootprintReconstructor::reconstr
     double lat, double lon,
     double altitude_m, double heading_deg,
     double fx, double fy, int img_w, int img_h,
-    cv::Size output_size, double mosaic_context_scale)
+    cv::Size output_size, double mosaic_context_scale,
+    double satellite_context_scale)
 {
     double fw = altitude_m * img_w / fx;
     double fh = altitude_m * img_h / fy;
 
     // Footprint corners
     auto corners = compute_footprint_corners_gps(fx, fy, img_w, img_h, altitude_m, heading_deg, lat, lon, enu_);
+
+    // Scale satellite footprint corners outward from center if context > 1.0
+    if (satellite_context_scale > 1.001) {
+        for (auto& c : corners) {
+            c[0] = lat + (c[0] - lat) * satellite_context_scale;
+            c[1] = lon + (c[1] - lon) * satellite_context_scale;
+        }
+    }
 
     // Mosaic extent
     double diag = std::sqrt(fw * fw + fh * fh);

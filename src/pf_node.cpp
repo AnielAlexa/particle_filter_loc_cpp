@@ -5,6 +5,8 @@
 #include <iomanip>
 #include <numeric>
 
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
 #include <cv_bridge/cv_bridge.h>
 
 namespace pf {
@@ -72,7 +74,9 @@ void PFGeoLocNode::init_diag_csv() {
                   << "flow_consistency,flow_mag_cv,inlier_ratio,"
                   << "drift_factor,corr_ema,sigma_pos,sigma_obs_fine,roughen,"
                   << "rtk_lat,rtk_lon,pnp_alt,baro_alt,fine_method,"
-                  << "fine_lat,fine_lon,fine_gt_err\n";
+                  << "fine_lat,fine_lon,fine_gt_err,"
+                  << "sat_inliers,sat_gt_err,sat_method,"
+                  << "mos_inliers,mos_gt_err,mos_method\n";
         RCLCPP_INFO(get_logger(), "Diagnostic CSV: %s", path.c_str());
     }
 }
@@ -90,19 +94,20 @@ void PFGeoLocNode::log_diag_row(
     double roughen, double rtk_lat, double rtk_lon,
     double pnp_altitude, double baro_altitude,
     const std::string& fine_method,
-    double fine_lat, double fine_lon)
+    double fine_lat, double fine_lon,
+    int sat_inliers, double sat_lat, double sat_lon, const std::string& sat_method,
+    int mos_inliers, double mos_lat, double mos_lon, const std::string& mos_method)
 {
     if (!diag_csv_.is_open()) return;
     double ts = stamp.sec + stamp.nanosec * 1e-9;
 
-    // Compute raw fine match error vs RTK ground truth
-    double fine_gt_err = 0.0;
-    if (fine_lat != 0.0 && rtk_lat != 0.0) {
-        double cos_lat = std::cos(rtk_lat * M_PI / 180.0);
-        double de = (fine_lon - rtk_lon) * cos_lat * 111319.5;
-        double dn = (fine_lat - rtk_lat) * 111319.5;
-        fine_gt_err = std::sqrt(de * de + dn * dn);
-    }
+    auto gt_err = [&](double lat, double lon) -> double {
+        if (lat == 0.0 || rtk_lat == 0.0) return 0.0;
+        double cl = std::cos(rtk_lat * M_PI / 180.0);
+        double de = (lon - rtk_lon) * cl * 111319.5;
+        double dn = (lat - rtk_lat) * 111319.5;
+        return std::sqrt(de * de + dn * dn);
+    };
 
     diag_csv_ << std::fixed << std::setprecision(3) << ts << ","
               << frame_count_ << "," << phase << ","
@@ -122,7 +127,9 @@ void PFGeoLocNode::log_diag_row(
               << std::setprecision(1) << pnp_altitude << "," << baro_altitude << ","
               << fine_method << ","
               << std::setprecision(8) << fine_lat << "," << fine_lon << ","
-              << std::setprecision(2) << fine_gt_err << "\n";
+              << std::setprecision(2) << gt_err(fine_lat, fine_lon) << ","
+              << sat_inliers << "," << std::setprecision(2) << gt_err(sat_lat, sat_lon) << "," << sat_method << ","
+              << mos_inliers << "," << std::setprecision(2) << gt_err(mos_lat, mos_lon) << "," << mos_method << "\n";
     diag_csv_.flush();
 }
 
@@ -185,7 +192,7 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
             // RTK init: seed PF from RTK position if available
             if (has_gt_) {
                 auto [e, n] = enu_.wgs84_to_enu(gt_lat_, gt_lon_);
-                pf_->seed_from_position(e, n, 0.0, 30.0, 180.0);
+                pf_->seed_from_position(e, n, 0.0, 15.0, 180.0);
                 RCLCPP_INFO(get_logger(), "RTK init: lat=%.6f lon=%.6f -> ENU(%.1f, %.1f)",
                     gt_lat_, gt_lon_, e, n);
             }
@@ -315,6 +322,9 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     double diag_pnp_alt = 0.0;
     double diag_fine_lat = 0.0, diag_fine_lon = 0.0;
     float diag_flow_con = 0.0f, diag_flow_cv = 0.0f, diag_inl_ratio = 0.0f;
+    // Per-stage bench
+    int diag_sat_inl = 0; double diag_sat_lat = 0, diag_sat_lon = 0; std::string diag_sat_method;
+    int diag_mos_inl = 0; double diag_mos_lat = 0, diag_mos_lon = 0; std::string diag_mos_method;
 
     // ── Fine frames: try reconstruction-based matching first (no coarse needed) ──
     if (should_fine) {
@@ -340,7 +350,24 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             }
         }
 
-        // Stage A: Satellite perspective-warped (best geometry)
+        // Debug: show images
+        {
+            int res = cfg_.matchers.matcher_resolution;
+            cv::Mat mono_wrap(height, width, CV_8UC1, const_cast<uint8_t*>(mono_data));
+            cv::Mat uav_show;
+            cv::resize(mono_wrap, uav_show, cv::Size(res, res));
+            cv::imshow("UAV", uav_show);
+            if (fp_recon.has_value() && !fp_recon->satellite_crop.empty())
+                cv::imshow("Satellite", fp_recon->satellite_crop);
+            if (fp_recon.has_value() && !fp_recon->mosaic_rotated.empty()) {
+                cv::Mat mosaic_show;
+                cv::resize(fp_recon->mosaic_rotated, mosaic_show, cv::Size(res, res));
+                cv::imshow("Mosaic", mosaic_show);
+            }
+            cv::waitKey(1);
+        }
+
+        // Stage A: Satellite perspective-warped (PnP only, no homography)
         if (fp_recon.has_value() && !fp_recon->satellite_crop.empty() && !fp_recon->warp_M_inv.empty()) {
             stats_.satellite_tried++;
             auto sat_fine = obs.fine_match_on_satellite(
@@ -355,56 +382,29 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                     best_fine = sat_fine;
             }
         }
+        // Stage B: Mosaic disabled — satellite only
 
-        // Stage B: Mosaic heading-aligned
-        if ((!best_fine || best_fine->inliers < early_exit) &&
-            fp_recon.has_value() && !fp_recon->mosaic_rotated.empty() && !fp_recon->rot_crop_M_inv.empty()) {
-            stats_.mosaic_tried++;
-            auto mosaic_fine = obs.fine_match_on_mosaic(
-                mono_data, width, height,
-                fp_recon->mosaic_rotated,
-                fp_recon->mosaic_meta,
-                fp_recon->rot_crop_M_inv);
-            if (mosaic_fine.has_value()) {
-                stats_.mosaic_ok++;
-                stats_.total_mosaic_inliers += mosaic_fine->inliers;
-                if (!best_fine || mosaic_fine->inliers > best_fine->inliers)
-                    best_fine = mosaic_fine;
-            }
-        }
-
-        // Homography gate: no altitude check, so cap correction distance
-        auto homography_gate = [&](const FineResult& fr, double corr_d) -> bool {
-            if (fr.method != "homography") return true;  // PnP already altitude-gated
-            return corr_d <= cfg_.pf.fine_consistency_max_m;
-        };
-
-        // If satellite/mosaic succeeded with enough inliers, apply and skip coarse
+        // If satellite succeeded with enough inliers, apply and skip coarse
         if (best_fine.has_value() && best_fine->inliers >= early_exit) {
             auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
             double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
-            if (homography_gate(*best_fine, corr_dist)) {
-                if (best_fine->inliers >= cfg_.pf.adaptive_min_inliers)
-                    pf.feed_correction_distance(corr_dist);
-                RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s — skip coarse (drift=%.2f)",
-                    frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
-                pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
-                fine_succeeded = true;
-                stats_.skip_coarse++;
-                diag_fine_source = best_fine->patch_name;
-                diag_fine_method = best_fine->method;
-                diag_fine_inliers = best_fine->inliers;
-                diag_corr_dist = corr_dist;
-                diag_pnp_alt = best_fine->pnp_altitude;
-                diag_fine_lat = best_fine->lat;
-                diag_fine_lon = best_fine->lon;
-                diag_flow_con = best_fine->flow_consistency;
-                diag_flow_cv = best_fine->flow_magnitude_cv;
-                diag_inl_ratio = best_fine->inlier_ratio;
-            } else {
-                RCLCPP_WARN(get_logger(), "F%d homography gate REJECTED %s corr=%.1fm (max=%.0fm)",
-                    frame_count_, best_fine->patch_name.c_str(), corr_dist, cfg_.pf.fine_consistency_max_m);
-            }
+            if (best_fine->inliers >= cfg_.pf.adaptive_min_inliers)
+                pf.feed_correction_distance(corr_dist);
+            RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s — skip coarse (drift=%.2f)",
+                frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
+            pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
+            fine_succeeded = true;
+            stats_.skip_coarse++;
+            diag_fine_source = best_fine->patch_name;
+            diag_fine_method = best_fine->method;
+            diag_fine_inliers = best_fine->inliers;
+            diag_corr_dist = corr_dist;
+            diag_pnp_alt = best_fine->pnp_altitude;
+            diag_fine_lat = best_fine->lat;
+            diag_fine_lon = best_fine->lon;
+            diag_flow_con = best_fine->flow_consistency;
+            diag_flow_cv = best_fine->flow_magnitude_cv;
+            diag_inl_ratio = best_fine->inlier_ratio;
         }
 
         // Stage C: Need coarse for single-patch fallback
@@ -450,32 +450,26 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             // Apply best fine result (from any stage)
             if (best_fine.has_value()) {
                 // Track which stage won
-                if (best_fine->patch_name == "satellite") { /* already counted */ }
-                else if (best_fine->patch_name == "mosaic") { /* already counted */ }
-                else { stats_.patch_ok++; stats_.total_patch_inliers += best_fine->inliers; }
+                if (best_fine->patch_name != "satellite")
+                    { stats_.patch_ok++; stats_.total_patch_inliers += best_fine->inliers; }
 
                 auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
                 double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
-                if (homography_gate(*best_fine, corr_dist)) {
-                    if (best_fine->inliers >= cfg_.pf.adaptive_min_inliers)
-                        pf.feed_correction_distance(corr_dist);
-                    RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse (drift=%.2f)",
-                        frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
-                    pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
-                    diag_fine_source = best_fine->patch_name;
-                    diag_fine_method = best_fine->method;
-                    diag_fine_inliers = best_fine->inliers;
-                    diag_corr_dist = corr_dist;
-                    diag_pnp_alt = best_fine->pnp_altitude;
-                    diag_fine_lat = best_fine->lat;
-                    diag_fine_lon = best_fine->lon;
-                    diag_flow_con = best_fine->flow_consistency;
-                    diag_flow_cv = best_fine->flow_magnitude_cv;
-                    diag_inl_ratio = best_fine->inlier_ratio;
-                } else {
-                    RCLCPP_WARN(get_logger(), "F%d homography gate REJECTED %s corr=%.1fm (max=%.0fm)",
-                        frame_count_, best_fine->patch_name.c_str(), corr_dist, cfg_.pf.fine_consistency_max_m);
-                }
+                if (best_fine->inliers >= cfg_.pf.adaptive_min_inliers)
+                    pf.feed_correction_distance(corr_dist);
+                RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse (drift=%.2f)",
+                    frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
+                pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
+                diag_fine_source = best_fine->patch_name;
+                diag_fine_method = best_fine->method;
+                diag_fine_inliers = best_fine->inliers;
+                diag_corr_dist = corr_dist;
+                diag_pnp_alt = best_fine->pnp_altitude;
+                diag_fine_lat = best_fine->lat;
+                diag_fine_lon = best_fine->lon;
+                diag_flow_con = best_fine->flow_consistency;
+                diag_flow_cv = best_fine->flow_magnitude_cv;
+                diag_inl_ratio = best_fine->inlier_ratio;
             }
         }
     }
@@ -524,7 +518,9 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                  pf.adaptive_sigma_pos(), pf.adaptive_sigma_obs_fine(),
                  pf.adaptive_roughen_scale(), gt_lat_, gt_lon_,
                  diag_pnp_alt, obs.altitude_m, diag_fine_method,
-                 diag_fine_lat, diag_fine_lon);
+                 diag_fine_lat, diag_fine_lon,
+                 diag_sat_inl, diag_sat_lat, diag_sat_lon, diag_sat_method,
+                 diag_mos_inl, diag_mos_lat, diag_mos_lon, diag_mos_method);
 
     RCLCPP_INFO(get_logger(),
         "=== F%d | %s | lat=%.6f lon=%.6f | ESS=%.0f | spread=%.1f ===",
