@@ -36,15 +36,22 @@ class ImageCropNode(Node):
         self.subsample = self.get_parameter("subsample").value
         self.frame_count = 0
 
-        qos = QoSProfile(
+        # Subscribe reliable (matches bag replay QoS)
+        qos_sub = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
+        # Publish best_effort (matches PF node QoS)
+        qos_pub = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
 
-        self.pub = self.create_publisher(Image, output_topic, qos)
+        self.pub = self.create_publisher(Image, output_topic, qos_pub)
         self.sub = self.create_subscription(
-            Image, input_topic, self.callback, qos
+            Image, input_topic, self.callback, qos_sub
         )
 
         self.get_logger().info(
