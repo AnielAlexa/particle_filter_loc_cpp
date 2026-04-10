@@ -226,7 +226,8 @@ bool ParticleFilter::update_fine(
     double fine_east, double fine_north, int inliers,
     std::optional<double> heading_deg,
     std::optional<double> sigma_override,
-    std::optional<double> kappa_override)
+    std::optional<double> kappa_override,
+    const std::string& method)
 {
     if (!initialized_) return false;
     if (std::isnan(fine_east) || std::isnan(fine_north)) return false;
@@ -240,9 +241,9 @@ bool ParticleFilter::update_fine(
     // Inlier trust score: smooth exponential curve
     double trust = 1.0 - std::exp(-static_cast<double>(inliers) / cfg_.inlier_tau);
 
-    // Consistency gate: scales with both trust and spread
-    // Tight when PF is confident (small spread), opens when uncertain (large spread)
-    if (cfg_.fine_consistency_max_m > 0.0 && !sigma_override.has_value()) {
+    // Consistency gate: only for homography (PnP is more reliable, let it through)
+    if (cfg_.fine_consistency_max_m > 0.0 && !sigma_override.has_value()
+        && method != "pnp") {
         auto [est_e, est_n, est_h] = estimate();
         double dist = std::sqrt((fine_east - est_e) * (fine_east - est_e) +
                                 (fine_north - est_n) * (fine_north - est_n));

@@ -17,13 +17,13 @@ particle_filter:
   sigma_hdg_dispersed: 10.0
   sigma_hdg_tracking: 2.0
   # Drift noise: simulates VIO-like uncertainty, forces PF to rely on matching
-  drift_noise_m_per_s: 0.0     # no drift — baseline test
+  drift_noise_m_per_s: 1.0     # simulate VIO drift
   drift_noise_hdg_per_s: 0.0      # 1.5x position drift
   sigma_obs_coarse: 10.0         # tight coarse pull
   sigma_obs_fine: 5.0            # base observation sigma
   top_k_coarse: 5
   ess_threshold_fraction: 0.5
-  init_altitude_m: 50.0          # match altitude_min_process_m; RTK-init doesn't need VPR
+  init_altitude_m: 25.0          # match altitude_min_process_m; RTK-init doesn't need VPR
   converge_spread_m: 40.0        # enter CONVERGING earlier
   tracking_spread_m: 20.0        # enter TRACKING earlier
   lost_spread_m: 150.0
@@ -43,7 +43,7 @@ particle_filter:
   static_threshold_m: 0.15         # RTK delta below this = static
   static_sigma_scale: 0.1          # process noise multiplier when static
   # Fine match consistency gate (0 = disabled)
-  fine_consistency_max_m: 25.0     # base gate; scaled by inlier tiers in code
+  fine_consistency_max_m: 15.0     # base gate; scaled by inlier tiers in code
   fine_force_inliers: 0             # disabled
   # Roughening: jitter after resampling to prevent particle collapse
   roughen_enabled: true
@@ -164,7 +164,7 @@ matchers:
   fine_conf_threshold: 0.17
   min_inliers_ransac: 4
   min_inliers: 8
-  min_inliers_homography: 5
+  min_inliers_homography: 8
   mosaic_context_scale: 1.3       # mosaic crop = footprint_diagonal * this
   satellite_context_scale: 1.1   # satellite crop expansion (more context for matching)
 
@@ -180,6 +180,6 @@ replay:
   altimeter_topic: "/altimeter/range"
   start_offset_s: 50.0        # skip this many seconds from bag start
   camera_subsample: 3           # tuned: best avg across noise levels (~7Hz at 20Hz camera)
-  altitude_min_process_m: 50.0  # skip camera frames if median altitude below this
+  altitude_min_process_m: 25.0  # skip camera frames if median altitude below this
   output_csv: "results/pf_results.csv"
   output_plot: "results/pf_trajectory.png"

@@ -39,7 +39,8 @@ public:
     bool update_fine(double fine_east, double fine_north, int inliers,
                      std::optional<double> heading_deg = std::nullopt,
                      std::optional<double> sigma_override = std::nullopt,
-                     std::optional<double> kappa_override = std::nullopt);
+                     std::optional<double> kappa_override = std::nullopt,
+                     const std::string& method = "");
 
     // Global correction (LOST recovery)
     void apply_global_correction(double east, double north,
