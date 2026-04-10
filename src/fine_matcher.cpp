@@ -14,30 +14,21 @@ FineMatcher::FineMatcher(
       resolution_(resolution), conf_threshold_(conf_threshold)
 {
     // Discover tensor indices by name
-    // ELoFTR has: image0, image1 (inputs), keypoints0, keypoints1, mconf, num_matches (outputs)
-    img0_idx_ = -1; img1_idx_ = -1;
-    kpts0_idx_ = -1; kpts1_idx_ = -1; conf_idx_ = -1; num_matches_idx_ = -1;
+    // LiteSAM Full: image0, image1 (inputs), mkpts0_f, mkpts1_f, mconf, valid_count (outputs)
+    // Also supports ELoFTR names as fallback: keypoints0, keypoints1, num_matches
+    img0_idx_        = engine_.find_tensor("image0");
+    img1_idx_        = engine_.find_tensor("image1");
+    kpts0_idx_       = engine_.find_tensor("mkpts0_f");
+    kpts1_idx_       = engine_.find_tensor("mkpts1_f");
+    conf_idx_        = engine_.find_tensor("mconf");
+    valid_count_idx_ = engine_.find_tensor("valid_count");
 
-    for (int i = 0; i < engine_.num_io(); ++i) {
-        const auto& name = engine_.tensor_name(i);
-        if (engine_.is_input(i)) {
-            if (name.find("0") != std::string::npos || img0_idx_ < 0)
-                img0_idx_ = i;
-            else
-                img1_idx_ = i;
-        } else {
-            if (name.find("keypoints0") != std::string::npos || name.find("kpts0") != std::string::npos)
-                kpts0_idx_ = i;
-            else if (name.find("keypoints1") != std::string::npos || name.find("kpts1") != std::string::npos)
-                kpts1_idx_ = i;
-            else if (name.find("num_matches") != std::string::npos)
-                num_matches_idx_ = i;
-            else if (name.find("conf") != std::string::npos || name.find("score") != std::string::npos)
-                conf_idx_ = i;
-        }
-    }
+    // Fallback: ELoFTR-style names
+    if (kpts0_idx_ < 0) kpts0_idx_ = engine_.find_tensor("keypoints0");
+    if (kpts1_idx_ < 0) kpts1_idx_ = engine_.find_tensor("keypoints1");
+    if (valid_count_idx_ < 0) valid_count_idx_ = engine_.find_tensor("num_matches");
 
-    // Fallback: assign by order if names don't match
+    // Last resort: assign by position
     if (img0_idx_ < 0 || img1_idx_ < 0) {
         int input_count = 0;
         for (int i = 0; i < engine_.num_io(); ++i) {
@@ -83,11 +74,11 @@ MatchOutput FineMatcher::match(
     float* kpts1_ptr = engine_.buffer_as<float>(kpts1_idx_);
     float* conf_ptr = engine_.buffer_as<float>(conf_idx_);
 
-    // Get actual match count from num_matches output tensor (int32 scalar)
+    // Get actual match count from valid_count output tensor (int64 for LiteSAM, int32 for ELoFTR)
     int total_valid = 0;
-    if (num_matches_idx_ >= 0) {
-        int32_t* nm_ptr = engine_.buffer_as<int32_t>(num_matches_idx_);
-        total_valid = static_cast<int>(nm_ptr[0]);
+    if (valid_count_idx_ >= 0) {
+        int64_t* vc_ptr = engine_.buffer_as<int64_t>(valid_count_idx_);
+        total_valid = static_cast<int>(vc_ptr[0]);
     } else {
         // Fallback: count non-zero confidence entries
         int max_buf = static_cast<int>(engine_.tensor_bytes(conf_idx_) / sizeof(float));
@@ -96,6 +87,9 @@ MatchOutput FineMatcher::match(
             else break;
         }
     }
+    // Clamp to buffer capacity
+    int max_kpts = static_cast<int>(engine_.tensor_bytes(conf_idx_) / sizeof(float));
+    total_valid = std::min(total_valid, max_kpts);
 
     if (total_valid == 0) return result;
 

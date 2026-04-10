@@ -147,7 +147,7 @@ matchers:
   patch_names_path: "data/descriptors_boq/patch_names.txt"
   # ─────────────────────────────────────────────────────────────────────
   ransac_max_iters: 1000          # jetson: cap findHomography iterations (cv2 default=2000)
-  fine_engine_path: "MatchAnything/matchanything_eloftr_320.trt"
+  fine_engine_path: "LiteSAM/litesam_full_320x320_orin_fp16.engine"
   use_pytorch_matcher: false         # true = PyTorch FP32, false = TRT
   fine_ckpt_path: "MatchAnything/matchanything_eloftr.ckpt"
   gps_metadata_path: "data/patches/gps_metadata.json"

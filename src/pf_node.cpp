@@ -1,5 +1,6 @@
 #include "particle_filter_loc_cpp/pf_node.hpp"
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
@@ -14,13 +15,11 @@ namespace pf {
 PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
     : Node("pf_geo_loc_node", options)
 {
-    // Load config
-    this->declare_parameter<std::string>("config_path", "");
+    // Load config (default: installed pf_config.yaml)
+    std::string default_config = ament_index_cpp::get_package_share_directory("particle_filter_loc_cpp")
+                                 + "/config/pf_config.yaml";
+    this->declare_parameter<std::string>("config_path", default_config);
     std::string config_path = this->get_parameter("config_path").as_string();
-    if (config_path.empty()) {
-        RCLCPP_ERROR(get_logger(), "config_path parameter required");
-        throw std::runtime_error("config_path not set");
-    }
 
     cfg_ = load_config(config_path);
     enu_ = ENUFrame(cfg_.enu_origin_lat, cfg_.enu_origin_lon);

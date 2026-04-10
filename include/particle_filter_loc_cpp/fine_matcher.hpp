@@ -31,7 +31,7 @@ private:
     int resolution_;
     float conf_threshold_;
     int img0_idx_, img1_idx_;
-    int kpts0_idx_, kpts1_idx_, conf_idx_, num_matches_idx_;
+    int kpts0_idx_, kpts1_idx_, conf_idx_, valid_count_idx_;
 };
 
 }  // namespace pf
