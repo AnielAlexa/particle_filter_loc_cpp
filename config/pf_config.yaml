@@ -64,6 +64,20 @@ particle_filter:
   adaptive_sigma_obs_fine_vio: 5.0
   adaptive_roughen_scale_vio: 2.0
 
+  # ── Bias model (5-state PF) ──
+  sigma_bias_random_walk: 0.05    # m/step bias drift (~0.5 m/s at 10Hz)
+  sigma_bias_init: 0.01           # initial bias uncertainty (near zero)
+  vio_jump_threshold_m: 5.0       # per-step displacement to trigger jump detection
+  vio_jump_velocity_ema_alpha: 0.3
+  obs_min_inliers_apply: 8        # skip observation update below this
+  init_sigma_pos: 0.2             # tight RTK init (m)
+  init_sigma_hdg: 2.0             # degrees
+  # LOST recovery
+  lost_recovery_min_inliers: 15
+  lost_recovery_verify_agreement_m: 20.0
+  lost_recovery_sigma_pos: 2.0
+  lost_recovery_sigma_hdg: 5.0
+
 trust:
   # Recon similarity: compute cosine sim between drone frame and reconstructed satellite crop
   # Feeds drift detection + coarse teleport suppression. Disabled = save ~4ms/frame.
@@ -147,10 +161,12 @@ matchers:
   camera_cy: 221.9
   context_enabled: true
   context_fraction: 0.2
-  fine_conf_threshold: 0.20
+  fine_conf_threshold: 0.17
   min_inliers_ransac: 4
   min_inliers: 8
+  min_inliers_homography: 5
   mosaic_context_scale: 1.3       # mosaic crop = footprint_diagonal * this
+  satellite_context_scale: 1.1   # satellite crop expansion (more context for matching)
 
 init:
   lock_n_frames: 4          # consecutive top-1 hits before seeding

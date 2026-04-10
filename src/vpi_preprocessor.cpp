@@ -3,16 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <iostream>
 #include <vector>
-#include <cuda_runtime.h>
-
-#ifdef HAS_VPI
-#include <vpi/Image.h>
-#include <vpi/Stream.h>
-#include <vpi/algo/Rescale.h>
-#include <vpi/algo/ConvertImageFormat.h>
-#endif
 
 namespace pf {
 
@@ -21,38 +12,12 @@ static constexpr float kMean[3] = {0.485f, 0.456f, 0.406f};
 static constexpr float kStd[3]  = {0.229f, 0.224f, 0.225f};
 
 VpiPreprocessor::VpiPreprocessor(int coarse_size, int fine_size)
-    : coarse_size_(coarse_size), fine_size_(fine_size)
-{
-#ifdef HAS_VPI
-    // Try to create VPI stream with VIC backend (Jetson hardware)
-    VPIStatus st = vpiStreamCreate(VPI_BACKEND_VIC | VPI_BACKEND_CUDA, &stream_);
-    if (st != VPI_SUCCESS) {
-        // Fallback to CUDA-only
-        st = vpiStreamCreate(VPI_BACKEND_CUDA, &stream_);
-    }
-    if (st == VPI_SUCCESS) {
-        vpi_initialized_ = true;
-        std::cout << "[VPI] Preprocessor initialized" << std::endl;
-    } else {
-        std::cerr << "[VPI] Failed to create stream, using CPU fallback" << std::endl;
-    }
-#endif
-}
-
-VpiPreprocessor::~VpiPreprocessor() {
-#ifdef HAS_VPI
-    if (pinned_src_) cudaFreeHost(pinned_src_);
-    if (input_vpi_) vpiImageDestroy(input_vpi_);
-    if (resized_vpi_) vpiImageDestroy(resized_vpi_);
-    if (stream_) vpiStreamDestroy(stream_);
-#endif
-}
+    : coarse_size_(coarse_size), fine_size_(fine_size) {}
 
 void VpiPreprocessor::resize_mono8_cpu(
     const uint8_t* src, int sw, int sh,
     uint8_t* dst, int dw, int dh)
 {
-    // Simple bilinear resize
     for (int y = 0; y < dh; ++y) {
         float sy = static_cast<float>(y) * (sh - 1) / (dh - 1);
         int y0 = static_cast<int>(sy);
@@ -76,13 +41,10 @@ void VpiPreprocessor::prepare_coarse(
     int cs = coarse_size_;
     std::vector<uint8_t> resized(cs * cs);
 
-    // CPU resize — simple and reliable for 320->256 downscale
-    {
-        if (width == cs && height == cs)
-            std::memcpy(resized.data(), mono_data, cs * cs);
-        else
-            resize_mono8_cpu(mono_data, width, height, resized.data(), cs, cs);
-    }
+    if (width == cs && height == cs)
+        std::memcpy(resized.data(), mono_data, cs * cs);
+    else
+        resize_mono8_cpu(mono_data, width, height, resized.data(), cs, cs);
 
     // Gray -> 3 channel + ImageNet normalize -> CHW format [1, 3, cs, cs]
     int plane_size = cs * cs;
@@ -101,7 +63,6 @@ void VpiPreprocessor::prepare_fine(
     int total = fs * fs;
 
     if (width == fs && height == fs) {
-        // Direct conversion, no resize needed
         for (int i = 0; i < total; ++i)
             output_ptr[i] = static_cast<float>(mono_data[i]) / 255.0f;
     } else {
@@ -118,7 +79,7 @@ void VpiPreprocessor::prepare_fine_patch(
     int fs = fine_size_;
     int total = fs * fs;
 
-    // BGR -> grayscale + resize
+    // BGR -> grayscale
     std::vector<uint8_t> gray(width * height);
     for (int i = 0; i < width * height; ++i) {
         int b = bgr_data[3 * i + 0];

@@ -293,7 +293,7 @@ std::optional<FineResult> ObservationModel::fine_match_on_satellite(
 
     // Homography fallback
     auto homo_result = pose_->solve_homography(match_out.keypoints0, mkpts1_northup, north_meta, res);
-    if (homo_result.has_value() && homo_result->inliers >= cfg_.min_inliers) {
+    if (homo_result.has_value() && homo_result->inliers >= cfg_.min_inliers_homography) {
         auto& r = homo_result.value();
         return FineResult{r.lat, r.lon, r.inliers, "homography", std::nullopt,
                          "satellite", flow.flow_consistency, flow.flow_magnitude_cv,

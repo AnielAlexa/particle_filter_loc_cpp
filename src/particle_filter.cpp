@@ -32,76 +32,29 @@ bool ParticleFilter::try_init(double altitude_m) {
     return altitude_m > cfg_.init_altitude_m;
 }
 
-void ParticleFilter::seed_from_coarse(
-    const std::vector<std::pair<double, double>>& centers_enu,
-    const std::vector<float>& similarities,
-    std::optional<double> sigma_override)
-{
-    double sigma = sigma_override.value_or(cfg_.sigma_obs_coarse);
-    int n = cfg_.n_dispersed;
-    int k = static_cast<int>(centers_enu.size());
-
-    // Compute allocation per center proportional to similarity
-    std::vector<double> sims(k);
-    double total = 0.0;
-    for (int i = 0; i < k; ++i) {
-        sims[i] = std::max(0.0, static_cast<double>(similarities[i]));
-        total += sims[i];
-    }
-    if (total <= 0.0) {
-        std::fill(sims.begin(), sims.end(), 1.0);
-        total = k;
-    }
-
-    std::vector<int> counts(k);
-    int sum_counts = 0;
-    for (int i = 0; i < k; ++i) {
-        counts[i] = static_cast<int>(std::round(sims[i] / total * n));
-        sum_counts += counts[i];
-    }
-    counts[0] += (n - sum_counts);  // fix rounding
-
-    particles_.resize(n, 3);
-    weights_.setConstant(n, 1.0 / n);
-
-    std::normal_distribution<double> pos_dist(0.0, sigma);
-    std::uniform_real_distribution<double> hdg_dist(0.0, 360.0);
-
-    int row = 0;
-    for (int i = 0; i < k; ++i) {
-        double east = centers_enu[i].first;
-        double north = centers_enu[i].second;
-        for (int j = 0; j < counts[i] && row < n; ++j, ++row) {
-            particles_(row, 0) = east + pos_dist(rng_);
-            particles_(row, 1) = north + pos_dist(rng_);
-            particles_(row, 2) = hdg_dist(rng_);
-        }
-    }
-
-    phase_ = Phase::DISPERSED;
-    frame_count_ = 0;
-    initialized_ = true;
-}
-
 void ParticleFilter::seed_from_position(
     double east, double north, double heading_deg,
     double sigma_pos, double sigma_hdg)
 {
-    int n = cfg_.n_dispersed;
-    particles_.resize(n, 3);
+    int n = cfg_.n_tracking;
+    particles_.resize(n, STATE_DIM);
+    particles_.setZero();
     weights_.setConstant(n, 1.0 / n);
 
     std::normal_distribution<double> pos_d(0.0, sigma_pos);
     std::normal_distribution<double> hdg_d(heading_deg, sigma_hdg);
+    std::normal_distribution<double> bias_d(0.0, cfg_.sigma_bias_init);
 
     for (int i = 0; i < n; ++i) {
-        particles_(i, 0) = east + pos_d(rng_);
-        particles_(i, 1) = north + pos_d(rng_);
-        particles_(i, 2) = std::fmod(hdg_d(rng_), 360.0);
-        if (particles_(i, 2) < 0) particles_(i, 2) += 360.0;
+        particles_(i, COL_X) = east + pos_d(rng_);
+        particles_(i, COL_Y) = north + pos_d(rng_);
+        particles_(i, COL_YAW) = std::fmod(hdg_d(rng_), 360.0);
+        if (particles_(i, COL_YAW) < 0) particles_(i, COL_YAW) += 360.0;
+        particles_(i, COL_BIAS_X) = bias_d(rng_);
+        particles_(i, COL_BIAS_Y) = bias_d(rng_);
     }
 
-    phase_ = Phase::CONVERGING;
+    phase_ = Phase::TRACKING;
     frame_count_ = 0;
     initialized_ = true;
 }
@@ -112,53 +65,59 @@ void ParticleFilter::predict(const MotionDelta& delta) {
     if (!initialized_) return;
     int n = particles_.rows();
 
-    double sigma_pos, sigma_hdg;
-    if (phase_ == Phase::TRACKING) {
-        sigma_pos = adaptive_sigma_pos();
-        sigma_hdg = cfg_.sigma_hdg_tracking;
-    } else {
-        sigma_pos = cfg_.sigma_pos_dispersed;
-        sigma_hdg = cfg_.sigma_hdg_dispersed;
-    }
-
     double move_m = std::sqrt(delta.dx_m * delta.dx_m + delta.dy_m * delta.dy_m);
     is_static_ = move_m < cfg_.static_threshold_m;
     if (!is_static_) motion_detected_ = true;
 
+    double sigma_pos = (phase_ == Phase::TRACKING)
+        ? cfg_.sigma_pos_tracking : cfg_.sigma_pos_dispersed;
+    double sigma_hdg = (phase_ == Phase::TRACKING)
+        ? cfg_.sigma_hdg_tracking : cfg_.sigma_hdg_dispersed;
+    double sigma_bias = cfg_.sigma_bias_random_walk;
+
     if (is_static_) {
         sigma_pos *= cfg_.static_sigma_scale;
         sigma_hdg *= cfg_.static_sigma_scale;
+        sigma_bias *= cfg_.static_sigma_scale;
     }
 
     std::normal_distribution<double> pos_noise(0.0, sigma_pos);
     std::normal_distribution<double> hdg_noise(0.0, sigma_hdg);
+    std::normal_distribution<double> bias_noise(0.0, sigma_bias);
 
-    for (int i = 0; i < n; ++i) {
-        particles_(i, 0) += delta.dx_m + pos_noise(rng_);
-        particles_(i, 1) += delta.dy_m + pos_noise(rng_);
-        particles_(i, 2) = delta.heading_deg + hdg_noise(rng_);
+    if (delta.is_jump) {
+        // VIO jump: absorb into bias, don't move position
+        for (int i = 0; i < n; ++i) {
+            particles_(i, COL_BIAS_X) += delta.dx_m + bias_noise(rng_);
+            particles_(i, COL_BIAS_Y) += delta.dy_m + bias_noise(rng_);
+            particles_(i, COL_YAW) = delta.heading_deg + hdg_noise(rng_);
+        }
+    } else {
+        // Normal VIO motion update
+        for (int i = 0; i < n; ++i) {
+            particles_(i, COL_X) += delta.dx_m + pos_noise(rng_);
+            particles_(i, COL_Y) += delta.dy_m + pos_noise(rng_);
+            particles_(i, COL_YAW) = delta.heading_deg + hdg_noise(rng_);
+            // Bias random walk
+            particles_(i, COL_BIAS_X) += bias_noise(rng_);
+            particles_(i, COL_BIAS_Y) += bias_noise(rng_);
+        }
     }
 
-    // Drift noise
-    if (!is_static_ && cfg_.drift_noise_m_per_s > 0.0 && delta.dt_s > 0.0) {
+    // Legacy drift noise (will be removed in Phase 6)
+    if (!is_static_ && !delta.is_jump && cfg_.drift_noise_m_per_s > 0.0 && delta.dt_s > 0.0) {
         double drift_sigma = cfg_.drift_noise_m_per_s * std::sqrt(delta.dt_s);
         std::normal_distribution<double> drift(0.0, drift_sigma);
         for (int i = 0; i < n; ++i) {
-            particles_(i, 0) += drift(rng_);
-            particles_(i, 1) += drift(rng_);
+            particles_(i, COL_X) += drift(rng_);
+            particles_(i, COL_Y) += drift(rng_);
         }
-    }
-    if (!is_static_ && cfg_.drift_noise_hdg_per_s > 0.0 && delta.dt_s > 0.0) {
-        double hdg_sigma = cfg_.drift_noise_hdg_per_s * std::sqrt(delta.dt_s);
-        std::normal_distribution<double> drift_hdg(0.0, hdg_sigma);
-        for (int i = 0; i < n; ++i)
-            particles_(i, 2) += drift_hdg(rng_);
     }
 
     // Normalize heading to [0, 360)
     for (int i = 0; i < n; ++i) {
-        particles_(i, 2) = std::fmod(particles_(i, 2), 360.0);
-        if (particles_(i, 2) < 0) particles_(i, 2) += 360.0;
+        particles_(i, COL_YAW) = std::fmod(particles_(i, COL_YAW), 360.0);
+        if (particles_(i, COL_YAW) < 0) particles_(i, COL_YAW) += 360.0;
     }
 }
 
@@ -222,8 +181,10 @@ void ParticleFilter::update_coarse(
         double log_mix = std::log(mix_w(k) + 1e-300);
 
         for (int i = 0; i < N; ++i) {
-            double dx = particles_(i, 0) - east;
-            double dy = particles_(i, 1) - north;
+            double gx = particles_(i, COL_X) - particles_(i, COL_BIAS_X);
+            double gy = particles_(i, COL_Y) - particles_(i, COL_BIAS_Y);
+            double dx = gx - east;
+            double dy = gy - north;
             double d2 = dx * dx + dy * dy;
 
             double lc;
@@ -261,59 +222,6 @@ void ParticleFilter::update_coarse(
         weights_.setConstant(N, 1.0 / N);
 }
 
-void ParticleFilter::inject_coarse_trust(
-    double east, double north, float sim,
-    std::optional<double> frac_override,
-    std::optional<double> sigma_override)
-{
-    if (!initialized_) return;
-    int n = particles_.rows();
-
-    double fraction, sigma;
-    if (frac_override.has_value()) {
-        fraction = frac_override.value();
-        sigma = sigma_override.value_or(20.0);
-    } else {
-        return;  // no threshold-based logic without override
-    }
-
-    int n_inject = static_cast<int>(fraction * n);
-    int n_keep = n - n_inject;
-
-    // Keep highest-weight particles
-    std::vector<int> idx(n);
-    std::iota(idx.begin(), idx.end(), 0);
-    std::partial_sort(idx.begin(), idx.begin() + n_keep, idx.end(),
-                      [&](int a, int b) { return weights_(a) > weights_(b); });
-
-    // Current heading estimate
-    double sin_sum = 0, cos_sum = 0;
-    for (int i = 0; i < n; ++i) {
-        double rad = particles_(i, 2) * M_PI / 180.0;
-        sin_sum += weights_(i) * std::sin(rad);
-        cos_sum += weights_(i) * std::cos(rad);
-    }
-    double est_hdg = std::fmod(std::atan2(sin_sum, cos_sum) * 180.0 / M_PI, 360.0);
-    if (est_hdg < 0) est_hdg += 360.0;
-
-    Eigen::MatrixXd new_particles(n, 3);
-    std::normal_distribution<double> pos_d(0.0, sigma);
-    std::normal_distribution<double> hdg_d(est_hdg, 10.0);
-
-    for (int i = 0; i < n_keep; ++i)
-        new_particles.row(i) = particles_.row(idx[i]);
-
-    for (int i = n_keep; i < n; ++i) {
-        new_particles(i, 0) = east + pos_d(rng_);
-        new_particles(i, 1) = north + pos_d(rng_);
-        new_particles(i, 2) = std::fmod(hdg_d(rng_), 360.0);
-        if (new_particles(i, 2) < 0) new_particles(i, 2) += 360.0;
-    }
-
-    particles_ = new_particles;
-    weights_.setConstant(n, 1.0 / n);
-}
-
 bool ParticleFilter::update_fine(
     double fine_east, double fine_north, int inliers,
     std::optional<double> heading_deg,
@@ -323,30 +231,38 @@ bool ParticleFilter::update_fine(
     if (!initialized_) return false;
     if (std::isnan(fine_east) || std::isnan(fine_north)) return false;
 
+    // Inlier gating: skip update when matcher is unreliable
+    if (inliers < cfg_.obs_min_inliers_apply && !sigma_override.has_value())
+        return false;
+
     int N = particles_.rows();
 
-    // Consistency gate
+    // Inlier trust score: smooth exponential curve
+    double trust = 1.0 - std::exp(-static_cast<double>(inliers) / cfg_.inlier_tau);
+
+    // Consistency gate: scales with both trust and spread
+    // Tight when PF is confident (small spread), opens when uncertain (large spread)
     if (cfg_.fine_consistency_max_m > 0.0 && !sigma_override.has_value()) {
         auto [est_e, est_n, est_h] = estimate();
         double dist = std::sqrt((fine_east - est_e) * (fine_east - est_e) +
                                 (fine_north - est_n) * (fine_north - est_n));
-        double max_dist = cfg_.fine_consistency_max_m;
-        if (inliers > 40) max_dist *= 2.0;
-        else if (inliers > 25) max_dist *= 1.5;
+        double spread = weighted_spread();
+        double max_dist = cfg_.fine_consistency_max_m + spread * 2.0;
+        // Trust bonus: high-inlier matches get wider acceptance
+        max_dist *= (1.0 + 0.5 * trust);
         if (dist > max_dist) return false;
     }
 
-    // Determine sigma
+    // Determine sigma: smooth scaling from trust score
+    // trust=0 → sigma = base/0.2 = 5x base (very loose)
+    // trust=0.5 → sigma = base/0.6 = 1.67x base
+    // trust=1.0 → sigma = base/1.0 = base (tight)
     double sigma;
     if (sigma_override.has_value()) {
         sigma = sigma_override.value();
     } else {
-        double base = adaptive_sigma_obs_fine();
-        if (inliers > 60) sigma = base * 0.3;
-        else if (inliers > 40) sigma = base * 0.5;
-        else if (inliers > 25) sigma = base * 0.7;
-        else if (inliers > 15) sigma = base;
-        else sigma = base * 2.0;
+        double scale = 1.0 / (0.2 + 0.8 * trust);
+        sigma = cfg_.sigma_obs_fine * scale;
     }
 
     double sigma2 = 2.0 * sigma * sigma;
@@ -354,8 +270,11 @@ bool ParticleFilter::update_fine(
 
     Eigen::VectorXd log_lik(N);
     for (int i = 0; i < N; ++i) {
-        double dx = particles_(i, 0) - fine_east;
-        double dy = particles_(i, 1) - fine_north;
+        // Bias-corrected global position
+        double gx = particles_(i, COL_X) - particles_(i, COL_BIAS_X);
+        double gy = particles_(i, COL_Y) - particles_(i, COL_BIAS_Y);
+        double dx = gx - fine_east;
+        double dy = gy - fine_north;
         double d2 = dx * dx + dy * dy;
         if (nu < 100.0)
             log_lik(i) = -(nu + 2.0) / 2.0 * std::log(1.0 + d2 / (nu * sigma2));
@@ -369,14 +288,13 @@ bool ParticleFilter::update_fine(
         if (kappa_override.has_value()) {
             kappa = kappa_override.value();
         } else {
-            if (inliers > 40) kappa = 15.0;
-            else if (inliers > 25) kappa = 10.0;
-            else kappa = 5.0;
+            // Smooth kappa from trust: trust=0.45 → κ≈7, trust=0.63 → κ≈9.5, trust=0.95 → κ≈14
+            kappa = 15.0 * trust;
         }
         if (kappa > 0) {
             double hdg = heading_deg.value();
             for (int i = 0; i < N; ++i) {
-                double diff_rad = (particles_(i, 2) - hdg) * M_PI / 180.0;
+                double diff_rad = (particles_(i, COL_YAW) - hdg) * M_PI / 180.0;
                 log_lik(i) += kappa * std::cos(diff_rad);
             }
         }
@@ -394,85 +312,19 @@ bool ParticleFilter::update_fine(
     return true;
 }
 
-// ─── Adaptive ───────────────────────────────────────────────────
-
-void ParticleFilter::feed_correction_distance(double correction_dist_m) {
-    if (!cfg_.adaptive_enabled) return;
-    double alpha = cfg_.adaptive_ema_alpha;
-    correction_ema_ = alpha * correction_dist_m + (1.0 - alpha) * correction_ema_;
-    // Noise floor: fine-match position noise (~2-5m) is not drift.
-    // Only ramp drift_factor above the floor.
-    double floor = cfg_.adaptive_drift_floor_m;
-    double ref = cfg_.adaptive_drift_ref_m;
-    if (ref <= floor)
-        drift_factor_ = 0.0;
-    else
-        drift_factor_ = clamp((correction_ema_ - floor) / (ref - floor), 0.0, 1.0);
-}
-
-double ParticleFilter::adaptive_sigma_pos() const {
-    if (!cfg_.adaptive_enabled) return cfg_.sigma_pos_tracking;
-    double f = drift_factor_;
-    return cfg_.adaptive_sigma_pos_rtk + f * (cfg_.adaptive_sigma_pos_vio - cfg_.adaptive_sigma_pos_rtk);
-}
-
-double ParticleFilter::adaptive_sigma_obs_fine() const {
-    if (!cfg_.adaptive_enabled) return cfg_.sigma_obs_fine;
-    double f = drift_factor_;
-    return cfg_.adaptive_sigma_obs_fine_rtk + f * (cfg_.adaptive_sigma_obs_fine_vio - cfg_.adaptive_sigma_obs_fine_rtk);
-}
-
-double ParticleFilter::adaptive_roughen_scale() const {
-    if (!cfg_.adaptive_enabled) return cfg_.roughen_scale;
-    double f = drift_factor_;
-    return cfg_.adaptive_roughen_scale_rtk + f * (cfg_.adaptive_roughen_scale_vio - cfg_.adaptive_roughen_scale_rtk);
-}
-
 void ParticleFilter::apply_global_correction(
     double east, double north, std::optional<double> heading_deg,
     double teleport_fraction, double teleport_sigma)
 {
     if (!initialized_) return;
-    int n = particles_.rows();
-    int n_inject = static_cast<int>(teleport_fraction * n);
-    int n_keep = n - n_inject;
 
-    // Keep highest-weight particles
-    std::vector<int> idx(n);
-    std::iota(idx.begin(), idx.end(), 0);
-    std::partial_sort(idx.begin(), idx.begin() + n_keep, idx.end(),
-                      [&](int a, int b) { return weights_(a) > weights_(b); });
+    // LOST recovery: re-seed all particles at verified position
+    double hdg = heading_deg.value_or(0.0);
+    double sigma_pos = (teleport_sigma > 0.0) ? teleport_sigma : cfg_.lost_recovery_sigma_pos;
+    double sigma_hdg = cfg_.lost_recovery_sigma_hdg;
 
-    std::normal_distribution<double> pos_d(0.0, teleport_sigma);
-
-    double est_hdg;
-    if (heading_deg.has_value()) {
-        est_hdg = heading_deg.value();
-    } else {
-        double sin_sum = 0, cos_sum = 0;
-        for (int i = 0; i < n; ++i) {
-            double rad = particles_(i, 2) * M_PI / 180.0;
-            sin_sum += weights_(i) * std::sin(rad);
-            cos_sum += weights_(i) * std::cos(rad);
-        }
-        est_hdg = std::fmod(std::atan2(sin_sum, cos_sum) * 180.0 / M_PI, 360.0);
-        if (est_hdg < 0) est_hdg += 360.0;
-    }
-
-    double hdg_sigma = heading_deg.has_value() ? 5.0 : 10.0;
-    std::normal_distribution<double> hdg_d(est_hdg, hdg_sigma);
-
-    Eigen::MatrixXd new_p(n, 3);
-    for (int i = 0; i < n_keep; ++i)
-        new_p.row(i) = particles_.row(idx[i]);
-    for (int i = n_keep; i < n; ++i) {
-        new_p(i, 0) = east + pos_d(rng_);
-        new_p(i, 1) = north + pos_d(rng_);
-        new_p(i, 2) = std::fmod(hdg_d(rng_), 360.0);
-        if (new_p(i, 2) < 0) new_p(i, 2) += 360.0;
-    }
-    particles_ = new_p;
-    weights_.setConstant(n, 1.0 / n);
+    seed_from_position(east, north, hdg, sigma_pos, sigma_hdg);
+    phase_ = Phase::TRACKING;
 }
 
 // ─── Resampling ─────────────────────────────────────────────────
@@ -495,7 +347,7 @@ void ParticleFilter::systematic_resample() {
     std::uniform_real_distribution<double> u01(0.0, 1.0);
     double u0 = u01(rng_);
 
-    Eigen::MatrixXd new_particles(n, 3);
+    Eigen::MatrixXd new_particles(n, STATE_DIM);
     int j = 0;
     for (int i = 0; i < n; ++i) {
         double target = (u0 + i) / n;
@@ -507,7 +359,7 @@ void ParticleFilter::systematic_resample() {
 
     // Roughening
     if (cfg_.roughen_enabled) {
-        double h = adaptive_roughen_scale();
+        double h = cfg_.roughen_scale;
         double spread = weighted_spread();
         double n_inv_third = std::pow(static_cast<double>(n), -1.0 / 3.0);
         double roughen_pos = std::max(0.3, h * spread * n_inv_third);
@@ -515,12 +367,15 @@ void ParticleFilter::systematic_resample() {
 
         std::normal_distribution<double> pos_d(0.0, roughen_pos);
         std::normal_distribution<double> hdg_d(0.0, roughen_hdg);
+        std::normal_distribution<double> bias_d(0.0, 0.01);
         for (int i = 0; i < n; ++i) {
-            particles_(i, 0) += pos_d(rng_);
-            particles_(i, 1) += pos_d(rng_);
-            particles_(i, 2) += hdg_d(rng_);
-            particles_(i, 2) = std::fmod(particles_(i, 2), 360.0);
-            if (particles_(i, 2) < 0) particles_(i, 2) += 360.0;
+            particles_(i, COL_X) += pos_d(rng_);
+            particles_(i, COL_Y) += pos_d(rng_);
+            particles_(i, COL_YAW) += hdg_d(rng_);
+            particles_(i, COL_YAW) = std::fmod(particles_(i, COL_YAW), 360.0);
+            if (particles_(i, COL_YAW) < 0) particles_(i, COL_YAW) += 360.0;
+            particles_(i, COL_BIAS_X) += bias_d(rng_);
+            particles_(i, COL_BIAS_Y) += bias_d(rng_);
         }
     }
 }
@@ -532,23 +387,15 @@ void ParticleFilter::check_transitions() {
     double spread = weighted_spread();
 
     switch (phase_) {
-    case Phase::DISPERSED:
-        if (spread < cfg_.converge_spread_m)
-            phase_ = Phase::CONVERGING;
-        break;
-    case Phase::CONVERGING:
-        if (spread < cfg_.tracking_spread_m) {
-            reduce_particles(cfg_.n_tracking);
-            phase_ = Phase::TRACKING;
-            frame_count_ = 0;
-        } else if (spread > cfg_.lost_spread_m) {
-            phase_ = Phase::DISPERSED;
-        }
-        break;
     case Phase::TRACKING:
         if (spread > cfg_.lost_spread_m) {
-            expand_particles(cfg_.n_dispersed);
-            phase_ = Phase::DISPERSED;
+            phase_ = Phase::LOST;
+            frame_count_ = 0;
+        }
+        break;
+    case Phase::LOST:
+        if (spread < cfg_.tracking_spread_m) {
+            phase_ = Phase::TRACKING;
             frame_count_ = 0;
         }
         break;
@@ -569,7 +416,7 @@ void ParticleFilter::reduce_particles(int target_n) {
     std::shuffle(idx.begin(), idx.end(), rng_);
     idx.resize(target_n);
 
-    Eigen::MatrixXd new_p(target_n, 3);
+    Eigen::MatrixXd new_p(target_n, STATE_DIM);
     for (int i = 0; i < target_n; ++i)
         new_p.row(i) = particles_.row(idx[i]);
     particles_ = new_p;
@@ -586,14 +433,17 @@ void ParticleFilter::expand_particles(int target_n) {
     std::normal_distribution<double> pos_d(0.0, cfg_.sigma_pos_dispersed);
     std::normal_distribution<double> hdg_d(0.0, cfg_.sigma_hdg_dispersed);
 
-    Eigen::MatrixXd new_p(target_n, 3);
+    Eigen::MatrixXd new_p(target_n, STATE_DIM);
+    new_p.setZero();
     new_p.topRows(n) = particles_;
     for (int i = 0; i < n_add; ++i) {
         int src = dist(rng_);
-        new_p(n + i, 0) = particles_(src, 0) + pos_d(rng_);
-        new_p(n + i, 1) = particles_(src, 1) + pos_d(rng_);
-        new_p(n + i, 2) = std::fmod(particles_(src, 2) + hdg_d(rng_), 360.0);
-        if (new_p(n + i, 2) < 0) new_p(n + i, 2) += 360.0;
+        new_p(n + i, COL_X) = particles_(src, COL_X) + pos_d(rng_);
+        new_p(n + i, COL_Y) = particles_(src, COL_Y) + pos_d(rng_);
+        new_p(n + i, COL_YAW) = std::fmod(particles_(src, COL_YAW) + hdg_d(rng_), 360.0);
+        if (new_p(n + i, COL_YAW) < 0) new_p(n + i, COL_YAW) += 360.0;
+        new_p(n + i, COL_BIAS_X) = particles_(src, COL_BIAS_X);
+        new_p(n + i, COL_BIAS_Y) = particles_(src, COL_BIAS_Y);
     }
     particles_ = new_p;
     weights_.setConstant(target_n, 1.0 / target_n);
@@ -605,13 +455,17 @@ std::tuple<double, double, double> ParticleFilter::estimate() const {
     if (!initialized_) return {0.0, 0.0, 0.0};
     int n = particles_.rows();
 
-    double east = weights_.dot(particles_.col(0));
-    double north = weights_.dot(particles_.col(1));
+    // Bias-corrected global position
+    double east = 0.0, north = 0.0;
+    for (int i = 0; i < n; ++i) {
+        east += weights_(i) * (particles_(i, COL_X) - particles_(i, COL_BIAS_X));
+        north += weights_(i) * (particles_(i, COL_Y) - particles_(i, COL_BIAS_Y));
+    }
 
     // Circular mean for heading
     double sin_sum = 0.0, cos_sum = 0.0;
     for (int i = 0; i < n; ++i) {
-        double rad = particles_(i, 2) * M_PI / 180.0;
+        double rad = particles_(i, COL_YAW) * M_PI / 180.0;
         sin_sum += weights_(i) * std::sin(rad);
         cos_sum += weights_(i) * std::cos(rad);
     }
@@ -619,6 +473,15 @@ std::tuple<double, double, double> ParticleFilter::estimate() const {
     if (heading < 0) heading += 360.0;
 
     return {east, north, heading};
+}
+
+PFEstimate ParticleFilter::estimate_full() const {
+    if (!initialized_) return {};
+    auto [e, n, h] = estimate();
+    int np = particles_.rows();
+    double bx = weights_.dot(particles_.col(COL_BIAS_X));
+    double by = weights_.dot(particles_.col(COL_BIAS_Y));
+    return {e, n, h, bx, by};
 }
 
 double ParticleFilter::effective_sample_size() const {
@@ -629,13 +492,20 @@ double ParticleFilter::effective_sample_size() const {
 double ParticleFilter::weighted_spread() const {
     if (!initialized_) return std::numeric_limits<double>::infinity();
     int n = particles_.rows();
-    double mean_e = weights_.dot(particles_.col(0));
-    double mean_n = weights_.dot(particles_.col(1));
+
+    // Bias-corrected positions
+    double mean_e = 0.0, mean_n = 0.0;
+    for (int i = 0; i < n; ++i) {
+        mean_e += weights_(i) * (particles_(i, COL_X) - particles_(i, COL_BIAS_X));
+        mean_n += weights_(i) * (particles_(i, COL_Y) - particles_(i, COL_BIAS_Y));
+    }
 
     double var_e = 0.0, var_n = 0.0;
     for (int i = 0; i < n; ++i) {
-        double de = particles_(i, 0) - mean_e;
-        double dn = particles_(i, 1) - mean_n;
+        double ge = particles_(i, COL_X) - particles_(i, COL_BIAS_X);
+        double gn = particles_(i, COL_Y) - particles_(i, COL_BIAS_Y);
+        double de = ge - mean_e;
+        double dn = gn - mean_n;
         var_e += weights_(i) * de * de;
         var_n += weights_(i) * dn * dn;
     }
@@ -644,8 +514,8 @@ double ParticleFilter::weighted_spread() const {
 
 bool ParticleFilter::should_run_fine() {
     frame_count_++;
-    if (phase_ == Phase::DISPERSED) return false;
-    if (phase_ == Phase::CONVERGING) return true;
+    if (phase_ == Phase::UNINIT) return false;
+    if (phase_ == Phase::LOST) return true;  // Always run fine in LOST for recovery
     return (frame_count_ % cfg_.fine_every_n_frames) == 0;
 }
 

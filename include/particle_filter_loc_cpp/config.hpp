@@ -50,6 +50,24 @@ struct PFConfig {
     double adaptive_sigma_pos_vio = 3.0;
     double adaptive_sigma_obs_fine_vio = 5.0;
     double adaptive_roughen_scale_vio = 2.0;
+
+    // Bias model (Phase 2+)
+    double sigma_bias_random_walk = 0.05;   // m/step bias drift
+    double sigma_bias_init = 0.01;          // initial bias uncertainty
+    double vio_jump_threshold_m = 5.0;      // displacement triggering jump detection
+    double vio_jump_velocity_ema_alpha = 0.3;
+    int obs_min_inliers_apply = 10;         // min inliers to apply observation
+    double inlier_tau = 25.0;               // trust curve: score = 1 - exp(-inliers/tau)
+
+    // Initialization (Phase 4+)
+    double init_sigma_pos = 0.2;
+    double init_sigma_hdg = 2.0;
+
+    // LOST recovery (Phase 5+)
+    int lost_recovery_min_inliers = 15;
+    double lost_recovery_verify_agreement_m = 20.0;
+    double lost_recovery_sigma_pos = 2.0;
+    double lost_recovery_sigma_hdg = 5.0;
 };
 
 struct TrustConfig {
@@ -115,9 +133,11 @@ struct MatcherConfig {
     double fine_conf_threshold = 0.20;
     int min_inliers_ransac = 4;
     int min_inliers = 8;
+    int min_inliers_homography = 5;
     int ransac_max_iters = 1000;
     int patch_cache_size = 100;
-    double mosaic_context_scale = 1.5;  // mosaic crop = footprint_diagonal * this
+    double mosaic_context_scale = 1.5;      // mosaic crop = footprint_diagonal * this
+    double satellite_context_scale = 1.1;  // satellite crop expansion factor
 };
 
 struct InitConfig {

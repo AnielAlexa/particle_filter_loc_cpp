@@ -66,7 +66,7 @@ TrtEngine::TrtEngine(const std::string& engine_path) {
     // Create CUDA stream
     cudaStreamCreate(&owned_stream_);
 
-    // Enumerate I/O tensors and allocate separate GPU + pinned host buffers
+    // Enumerate I/O tensors and allocate unified managed memory (Jetson shared DRAM)
     int n_io = engine_->getNbIOTensors();
     buffers_.resize(n_io);
 
@@ -78,28 +78,23 @@ TrtEngine::TrtEngine(const std::string& engine_path) {
         buffers_[i].dtype = engine_->getTensorDataType(name);
         buffers_[i].byte_size = volume(buffers_[i].dims) * dtype_size(buffers_[i].dtype);
 
-        // GPU device memory for TRT inference
-        cudaError_t err = cudaMalloc(&buffers_[i].dev_ptr, buffers_[i].byte_size);
+        // Unified memory: single allocation accessible by both CPU and GPU
+        // On Jetson (shared DRAM), no physical copy needed — just page migration
+        cudaError_t err = cudaMallocManaged(&buffers_[i].managed_ptr, buffers_[i].byte_size);
         if (err != cudaSuccess)
-            throw std::runtime_error(std::string("cudaMalloc failed: ") + cudaGetErrorString(err));
+            throw std::runtime_error(std::string("cudaMallocManaged failed: ") + cudaGetErrorString(err));
 
-        // Pinned host memory for CPU read/write
-        err = cudaMallocHost(&buffers_[i].host_ptr, buffers_[i].byte_size);
-        if (err != cudaSuccess)
-            throw std::runtime_error(std::string("cudaMallocHost failed: ") + cudaGetErrorString(err));
-
-        std::memset(buffers_[i].host_ptr, 0, buffers_[i].byte_size);
+        std::memset(buffers_[i].managed_ptr, 0, buffers_[i].byte_size);
 
         std::cout << "[TRT] Tensor '" << name << "' "
                   << (buffers_[i].is_input ? "INPUT" : "OUTPUT")
-                  << " " << buffers_[i].byte_size << " bytes" << std::endl;
+                  << " " << buffers_[i].byte_size << " bytes (managed)" << std::endl;
     }
 }
 
 TrtEngine::~TrtEngine() {
     for (auto& buf : buffers_) {
-        if (buf.dev_ptr) cudaFree(buf.dev_ptr);
-        if (buf.host_ptr) cudaFreeHost(buf.host_ptr);
+        if (buf.managed_ptr) cudaFree(buf.managed_ptr);
     }
     if (owned_stream_) cudaStreamDestroy(owned_stream_);
     if (context_) delete context_;
@@ -116,38 +111,22 @@ int TrtEngine::find_tensor(const std::string& name) const {
 void* TrtEngine::buffer_ptr_by_name(const std::string& name) {
     int idx = find_tensor(name);
     if (idx < 0) return nullptr;
-    return buffers_[idx].host_ptr;
+    return buffers_[idx].managed_ptr;
 }
 
 void TrtEngine::infer(cudaStream_t stream) {
     cudaStream_t s = stream ? stream : owned_stream_;
 
-    // Set tensor addresses to device pointers
+    // Set tensor addresses to managed pointers (same address for CPU and GPU)
     for (auto& buf : buffers_)
-        context_->setTensorAddress(buf.name.c_str(), buf.dev_ptr);
+        context_->setTensorAddress(buf.name.c_str(), buf.managed_ptr);
 
-    // Copy input buffers from host (pinned) to device — synchronous to ensure completion
-    for (auto& buf : buffers_) {
-        if (buf.is_input) {
-            cudaMemcpy(buf.dev_ptr, buf.host_ptr, buf.byte_size,
-                       cudaMemcpyHostToDevice);
-        }
-    }
-
-    // Execute on stream
+    // Execute on stream — no H2D/D2H copies needed with unified memory
     if (!context_->enqueueV3(s))
         std::cerr << "[TRT] enqueueV3 failed!" << std::endl;
 
-    // Wait for inference to complete
+    // Wait for inference to complete before CPU reads output
     cudaStreamSynchronize(s);
-
-    // Copy output buffers from device to host — synchronous
-    for (auto& buf : buffers_) {
-        if (!buf.is_input) {
-            cudaMemcpy(buf.host_ptr, buf.dev_ptr, buf.byte_size,
-                       cudaMemcpyDeviceToHost);
-        }
-    }
 }
 
 void TrtEngine::sync(cudaStream_t stream) {

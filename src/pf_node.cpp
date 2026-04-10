@@ -29,6 +29,7 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
     pf_ = std::make_unique<ParticleFilter>(cfg_.pf);
     obs_ = std::make_unique<ObservationModel>(cfg_.matchers, enu_);
     trust_ = std::make_unique<TrustTracker>(cfg_.trust);
+    motion_.set_jump_params(cfg_.pf.vio_jump_threshold_m, cfg_.pf.vio_jump_velocity_ema_alpha);
 
     // QoS
     rclcpp::QoS qos_sensor(1);
@@ -72,7 +73,7 @@ void PFGeoLocNode::init_diag_csv() {
                   << "spread,ess,top1_sim,n_coarse_cand,"
                   << "fine_source,fine_inliers,fine_corr_dist,"
                   << "flow_consistency,flow_mag_cv,inlier_ratio,"
-                  << "drift_factor,corr_ema,sigma_pos,sigma_obs_fine,roughen,"
+                  << "bias_x,bias_y,"
                   << "rtk_lat,rtk_lon,pnp_alt,baro_alt,fine_method,"
                   << "fine_lat,fine_lon,fine_gt_err,"
                   << "sat_inliers,sat_gt_err,sat_method,"
@@ -89,9 +90,8 @@ void PFGeoLocNode::log_diag_row(
     const std::string& fine_source, int fine_inliers,
     double fine_corr_dist, float flow_consistency,
     float flow_mag_cv, float inlier_ratio,
-    double drift_factor, double corr_ema,
-    double sigma_pos, double sigma_obs_fine,
-    double roughen, double rtk_lat, double rtk_lon,
+    double bias_x, double bias_y,
+    double rtk_lat, double rtk_lon,
     double pnp_altitude, double baro_altitude,
     const std::string& fine_method,
     double fine_lat, double fine_lon,
@@ -120,9 +120,7 @@ void PFGeoLocNode::log_diag_row(
               << std::setprecision(2) << fine_corr_dist << ","
               << std::setprecision(3) << flow_consistency << ","
               << flow_mag_cv << "," << inlier_ratio << ","
-              << std::setprecision(4) << drift_factor << ","
-              << std::setprecision(2) << corr_ema << ","
-              << sigma_pos << "," << sigma_obs_fine << "," << roughen << ","
+              << std::setprecision(4) << bias_x << "," << bias_y << ","
               << std::setprecision(8) << rtk_lat << "," << rtk_lon << ","
               << std::setprecision(1) << pnp_altitude << "," << baro_altitude << ","
               << fine_method << ","
@@ -192,7 +190,8 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
             // RTK init: seed PF from RTK position if available
             if (has_gt_) {
                 auto [e, n] = enu_.wgs84_to_enu(gt_lat_, gt_lon_);
-                pf_->seed_from_position(e, n, 0.0, 15.0, 180.0);
+                pf_->seed_from_position(e, n, 0.0,
+                    cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
                 RCLCPP_INFO(get_logger(), "RTK init: lat=%.6f lon=%.6f -> ENU(%.1f, %.1f)",
                     gt_lat_, gt_lon_, e, n);
             }
@@ -279,25 +278,6 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         RCLCPP_INFO(get_logger(), "DBG pixel check: avg(first100)=%.1f", sum / 100.0);
     }
 
-    // If PF not yet seeded (no RTK was available at altitude init), seed from coarse
-    if (pf.phase() == Phase::UNINIT && first_init_camera_) {
-        first_init_camera_ = false;
-        RCLCPP_INFO(get_logger(), "DBG: No RTK init, running coarse SEED (top_k=%d)",
-            cfg_.pf.top_k_coarse);
-        auto coarse = obs.coarse_match(mono_data, width, height, nullptr, cfg_.pf.top_k_coarse);
-        for (size_t i = 0; i < coarse.top_k_names.size(); ++i) {
-            RCLCPP_INFO(get_logger(), "DBG:   [%zu] %s sim=%.4f",
-                i, coarse.top_k_names[i].c_str(), coarse.top_k_sims[i]);
-        }
-        std::vector<std::pair<double, double>> centers;
-        for (auto& name : coarse.top_k_names)
-            centers.push_back(obs.get_patch_center_enu(name));
-        pf.seed_from_coarse(centers, coarse.top_k_sims);
-        RCLCPP_INFO(get_logger(), "DBG: coarse seed phase=%s spread=%.1f ESS=%.0f",
-            phase_name(pf.phase()), pf.weighted_spread(), pf.effective_sample_size());
-        return;
-    }
-
     if (pf.phase() == Phase::UNINIT) return;
 
     // Update altitude
@@ -344,7 +324,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                     cfg_.matchers.camera_fx, cfg_.matchers.camera_fy,
                     cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
                     cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
-                    cfg_.matchers.mosaic_context_scale);
+                    cfg_.matchers.mosaic_context_scale,
+                    cfg_.matchers.satellite_context_scale);
             } catch (const std::exception& e) {
                 RCLCPP_WARN(get_logger(), "Recon exception: %s", e.what());
             }
@@ -388,8 +369,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         if (best_fine.has_value() && best_fine->inliers >= early_exit) {
             auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
             double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
-            if (best_fine->inliers >= cfg_.pf.adaptive_min_inliers)
-                pf.feed_correction_distance(corr_dist);
+            (void)corr_dist;  // logged in CSV
             RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s — skip coarse (drift=%.2f)",
                 frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
             pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
@@ -412,7 +392,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             // Run coarse match
             const std::vector<int>* candidates = nullptr;
             std::vector<int> candidate_vec;
-            if (pf.phase() != Phase::DISPERSED) {
+            if (pf.phase() != Phase::LOST) {
                 candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius);
                 if (candidate_vec.size() < 5)
                     candidate_vec = obs.get_indices_within_radius(est_e, est_n, search_radius * 2.0);
@@ -426,7 +406,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 auto [e, n] = obs.get_patch_center_enu(coarse.top_k_names[i]);
                 coarse_obs.emplace_back(e, n, coarse.top_k_sims[i]);
             }
-            pf.update_coarse(coarse_obs);
+            if (pf.phase() == Phase::LOST)
+                pf.update_coarse(coarse_obs);
             if (!coarse.top_k_sims.empty())
                 diag_top1_sim = coarse.top_k_sims[0];
             diag_n_coarse_cand = static_cast<int>(coarse.top_k_names.size());
@@ -455,8 +436,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
 
                 auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
                 double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
-                if (best_fine->inliers >= cfg_.pf.adaptive_min_inliers)
-                    pf.feed_correction_distance(corr_dist);
+                (void)corr_dist;  // logged in CSV
                 RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse (drift=%.2f)",
                     frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
                 pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg);
@@ -482,12 +462,79 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     pf.resample_if_needed();
     pf.check_transitions();
 
-    // Adaptive regime debug (every 3s)
+    // ── LOST recovery: coarse(extended) → fine → double verify → re-inject ──
+    if (pf.phase() == Phase::LOST && should_fine && !fine_succeeded) {
+        RCLCPP_WARN(get_logger(), "F%d LOST recovery: running extended coarse+fine", frame_count_);
+
+        // Extended search: no radius filter (full DB)
+        auto coarse = obs.coarse_match(mono_data, width, height, nullptr, 1);
+        if (!coarse.top_k_names.empty() && coarse.top_k_sims[0] >= 0.3f) {
+            // Fine match on top-1 coarse result
+            double ctx_frac = pf.get_context_fraction();
+            auto primary_fine = obs.fine_match(mono_data, width, height,
+                                                coarse.top_k_names[0], ctx_frac);
+
+            if (primary_fine.has_value())
+            {
+                // Double verification: reconstruct satellite at candidate position, re-match
+                // Primary can be weak — verification match must confirm with enough inliers
+                double verify_heading = primary_fine->heading_deg.value_or(
+                    motion_.current_yaw()) + cfg_.camera.heading_offset_deg;
+                bool verified = false;
+                double agreement_m = 999.0;
+
+                try {
+                    auto verify_recon_opt = obs.footprint().reconstruct(
+                        primary_fine->lat, primary_fine->lon, obs.altitude_m, verify_heading,
+                        cfg_.matchers.camera_fx, cfg_.matchers.camera_fy,
+                        cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
+                        cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
+                        cfg_.matchers.mosaic_context_scale,
+                        cfg_.matchers.satellite_context_scale);
+
+                    if (verify_recon_opt.has_value() &&
+                        !verify_recon_opt->satellite_crop.empty() &&
+                        !verify_recon_opt->warp_M_inv.empty()) {
+                        auto verify_fine = obs.fine_match_on_satellite(
+                            mono_data, width, height,
+                            verify_recon_opt->satellite_crop,
+                            verify_recon_opt->mosaic_meta,
+                            verify_recon_opt->warp_M_inv);
+
+                        if (verify_fine.has_value() &&
+                            verify_fine->inliers >= cfg_.pf.lost_recovery_min_inliers) {
+                            auto [ve, vn] = enu_.wgs84_to_enu(verify_fine->lat, verify_fine->lon);
+                            auto [pe, pn] = enu_.wgs84_to_enu(primary_fine->lat, primary_fine->lon);
+                            agreement_m = std::sqrt((ve-pe)*(ve-pe) + (vn-pn)*(vn-pn));
+                            verified = agreement_m < cfg_.pf.lost_recovery_verify_agreement_m;
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    RCLCPP_WARN(get_logger(), "LOST verify exception: %s", e.what());
+                }
+
+                if (verified) {
+                    auto [fe, fn] = enu_.wgs84_to_enu(primary_fine->lat, primary_fine->lon);
+                    RCLCPP_WARN(get_logger(),
+                        "F%d LOST RECOVERED: inliers=%d agreement=%.1fm → re-inject at (%.1f, %.1f)",
+                        frame_count_, primary_fine->inliers, agreement_m, fe, fn);
+                    pf.apply_global_correction(fe, fn, primary_fine->heading_deg,
+                                               0.0, cfg_.pf.lost_recovery_sigma_pos);
+                } else {
+                    RCLCPP_WARN(get_logger(),
+                        "F%d LOST verify failed: inliers=%d agreement=%.1fm",
+                        frame_count_, primary_fine->inliers, agreement_m);
+                }
+            }
+        }
+    }
+
+    // Bias debug (every 3s)
+    auto est_full = pf.estimate_full();
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 3000,
-        "[ADAPTIVE] drift_factor=%.3f corr_ema=%.2f sigma_pos=%.2f sigma_obs_fine=%.2f roughen=%.2f spread=%.1f phase=%d",
-        pf.drift_factor(), pf.correction_ema(), pf.adaptive_sigma_pos(),
-        pf.adaptive_sigma_obs_fine(), pf.adaptive_roughen_scale(),
-        pf.weighted_spread(), static_cast<int>(pf.phase()));
+        "[BIAS] bias_x=%.3f bias_y=%.3f spread=%.1f phase=%s",
+        est_full.bias_x, est_full.bias_y,
+        pf.weighted_spread(), phase_name(pf.phase()));
 
     // Publish estimate
     auto [pub_e, pub_n, pub_hdg] = pf.estimate();
@@ -514,9 +561,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                  diag_top1_sim, diag_n_coarse_cand,
                  diag_fine_source, diag_fine_inliers, diag_corr_dist,
                  diag_flow_con, diag_flow_cv, diag_inl_ratio,
-                 pf.drift_factor(), pf.correction_ema(),
-                 pf.adaptive_sigma_pos(), pf.adaptive_sigma_obs_fine(),
-                 pf.adaptive_roughen_scale(), gt_lat_, gt_lon_,
+                 est_full.bias_x, est_full.bias_y,
+                 gt_lat_, gt_lon_,
                  diag_pnp_alt, obs.altitude_m, diag_fine_method,
                  diag_fine_lat, diag_fine_lon,
                  diag_sat_inl, diag_sat_lat, diag_sat_lon, diag_sat_method,

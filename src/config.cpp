@@ -80,6 +80,20 @@ FullConfig load_config(const std::string& yaml_path) {
         pf.adaptive_sigma_pos_vio = get(p, "adaptive_sigma_pos_vio", pf.adaptive_sigma_pos_vio);
         pf.adaptive_sigma_obs_fine_vio = get(p, "adaptive_sigma_obs_fine_vio", pf.adaptive_sigma_obs_fine_vio);
         pf.adaptive_roughen_scale_vio = get(p, "adaptive_roughen_scale_vio", pf.adaptive_roughen_scale_vio);
+
+        // Bias model
+        pf.sigma_bias_random_walk = get(p, "sigma_bias_random_walk", pf.sigma_bias_random_walk);
+        pf.sigma_bias_init = get(p, "sigma_bias_init", pf.sigma_bias_init);
+        pf.vio_jump_threshold_m = get(p, "vio_jump_threshold_m", pf.vio_jump_threshold_m);
+        pf.vio_jump_velocity_ema_alpha = get(p, "vio_jump_velocity_ema_alpha", pf.vio_jump_velocity_ema_alpha);
+        pf.obs_min_inliers_apply = get(p, "obs_min_inliers_apply", pf.obs_min_inliers_apply);
+        pf.inlier_tau = get(p, "inlier_tau", pf.inlier_tau);
+        pf.init_sigma_pos = get(p, "init_sigma_pos", pf.init_sigma_pos);
+        pf.init_sigma_hdg = get(p, "init_sigma_hdg", pf.init_sigma_hdg);
+        pf.lost_recovery_min_inliers = get(p, "lost_recovery_min_inliers", pf.lost_recovery_min_inliers);
+        pf.lost_recovery_verify_agreement_m = get(p, "lost_recovery_verify_agreement_m", pf.lost_recovery_verify_agreement_m);
+        pf.lost_recovery_sigma_pos = get(p, "lost_recovery_sigma_pos", pf.lost_recovery_sigma_pos);
+        pf.lost_recovery_sigma_hdg = get(p, "lost_recovery_sigma_hdg", pf.lost_recovery_sigma_hdg);
     }
 
     // Trust
@@ -143,9 +157,11 @@ FullConfig load_config(const std::string& yaml_path) {
         mc.fine_conf_threshold = get(m, "fine_conf_threshold", mc.fine_conf_threshold);
         mc.min_inliers_ransac = get(m, "min_inliers_ransac", mc.min_inliers_ransac);
         mc.min_inliers = get(m, "min_inliers", mc.min_inliers);
+        mc.min_inliers_homography = get(m, "min_inliers_homography", mc.min_inliers_homography);
         mc.ransac_max_iters = get(m, "ransac_max_iters", mc.ransac_max_iters);
         mc.patch_cache_size = get(m, "patch_cache_size", mc.patch_cache_size);
         mc.mosaic_context_scale = get(m, "mosaic_context_scale", mc.mosaic_context_scale);
+        mc.satellite_context_scale = get(m, "satellite_context_scale", mc.satellite_context_scale);
     }
 
     // Init

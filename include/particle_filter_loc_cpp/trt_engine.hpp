@@ -25,13 +25,13 @@ public:
     bool is_input(int idx) const { return buffers_[idx].is_input; }
     size_t tensor_bytes(int idx) const { return buffers_[idx].byte_size; }
 
-    // Host-side buffer pointer — CPU read/write, synced to/from GPU via infer()/sync()
-    void* buffer_ptr(int idx) { return buffers_[idx].host_ptr; }
-    const void* buffer_ptr(int idx) const { return buffers_[idx].host_ptr; }
+    // Unified memory buffer — accessible from both CPU and GPU (Jetson shared DRAM)
+    void* buffer_ptr(int idx) { return buffers_[idx].managed_ptr; }
+    const void* buffer_ptr(int idx) const { return buffers_[idx].managed_ptr; }
 
-    // Typed access (host pointer)
+    // Typed access
     template <typename T>
-    T* buffer_as(int idx) { return static_cast<T*>(buffers_[idx].host_ptr); }
+    T* buffer_as(int idx) { return static_cast<T*>(buffers_[idx].managed_ptr); }
 
     // Find buffer by name
     int find_tensor(const std::string& name) const;
@@ -49,8 +49,7 @@ private:
         nvinfer1::Dims dims;
         nvinfer1::DataType dtype;
         size_t byte_size;
-        void* dev_ptr = nullptr;   // GPU memory (cudaMalloc)
-        void* host_ptr = nullptr;  // CPU memory (cudaMallocHost for pinned)
+        void* managed_ptr = nullptr;  // Unified memory (cudaMallocManaged) — Jetson shares DRAM
         bool is_input;
     };
 

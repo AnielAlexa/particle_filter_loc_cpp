@@ -14,6 +14,17 @@ struct MotionDelta {
     double dy_m = 0.0;
     double heading_deg = 0.0;
     double dt_s = 0.0;
+    bool is_jump = false;
+};
+
+// ─── Particle filter estimate ──────────────────────────────────
+
+struct PFEstimate {
+    double global_x = 0.0;   // bias-corrected ENU east
+    double global_y = 0.0;   // bias-corrected ENU north
+    double yaw = 0.0;        // heading degrees [0, 360)
+    double bias_x = 0.0;     // accumulated VIO drift east
+    double bias_y = 0.0;     // accumulated VIO drift north
 };
 
 // ─── Coarse matching ────────────────────────────────────────────
@@ -43,14 +54,13 @@ struct FineResult {
 
 // ─── Particle filter phases ─────────────────────────────────────
 
-enum class Phase { UNINIT, DISPERSED, CONVERGING, TRACKING };
+enum class Phase { UNINIT, TRACKING, LOST };
 
 inline const char* phase_name(Phase p) {
     switch (p) {
-        case Phase::UNINIT:     return "UNINIT";
-        case Phase::DISPERSED:  return "DISPERSED";
-        case Phase::CONVERGING: return "CONVERGING";
-        case Phase::TRACKING:   return "TRACKING";
+        case Phase::UNINIT:   return "UNINIT";
+        case Phase::TRACKING: return "TRACKING";
+        case Phase::LOST:     return "LOST";
     }
     return "UNKNOWN";
 }
