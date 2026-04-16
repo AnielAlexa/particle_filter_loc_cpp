@@ -270,10 +270,9 @@ bool ParticleFilter::update_fine(
                                 (fine_north - est_n) * (fine_north - est_n));
         double spread = weighted_spread();
         double base = cfg_.fine_consistency_max_m;
-        if (method == "pnp") base *= 2.0;  // PnP is more reliable, wider gate
-        double max_dist = base + spread * 2.0;
-        // Trust bonus: high-inlier matches get wider acceptance
-        max_dist *= (1.0 + 0.5 * trust);
+        if (method == "pnp") base *= 1.5;
+        double max_dist = base + spread * 1.0;     // was *2.0 — too generous with spread
+        max_dist *= (1.0 + 0.4 * trust);            // was 0.5 — mild cap
         if (dist > max_dist) return false;
     }
 

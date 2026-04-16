@@ -11,16 +11,19 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/range.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include <optional>
+
 #include "config.hpp"
 #include "geo_utils.hpp"
-#include "motion_model.hpp"
 #include "observation_model.hpp"
 #include "particle_filter.hpp"
 #include "trust_model.hpp"
+#include "vio_motion_model.hpp"
 
 namespace pf {
 
@@ -33,6 +36,8 @@ private:
     void rtk_callback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr& msg);
     void yaw_callback(const std_msgs::msg::Float64::ConstSharedPtr& msg);
     void alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& msg);
+    void vio_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg);
+    void try_initialize(float median_alt);
     void process_frame(const uint8_t* mono_data, int width, int height,
                        const builtin_interfaces::msg::Time& stamp);
 
@@ -44,17 +49,24 @@ private:
     std::unique_ptr<ParticleFilter> pf_;
     std::unique_ptr<ObservationModel> obs_;
     std::unique_ptr<TrustTracker> trust_;
-    RTKMotionModel motion_;
+    VIOMotionModel vio_motion_;
 
     // ROS
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_image_;
     rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr sub_rtk_;
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr sub_yaw_;
     rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr sub_alt_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_vio_pose_;
 
     rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr pub_position_;
+    rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr pub_vio_position_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_ess_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_state_;
+
+    // VIO→ENU mapping (cached at init for dead-reckoned VIO trajectory publication)
+    double vio_ref_x_ = 0.0, vio_ref_y_ = 0.0;
+    double vio_align_cos_ = 1.0, vio_align_sin_ = 0.0;
+    double init_enu_e_ = 0.0, init_enu_n_ = 0.0;
 
     // State
     std::deque<float> altitude_buf_;
@@ -65,6 +77,12 @@ private:
     int frame_count_ = 0;
     double gt_lat_ = 0, gt_lon_ = 0;
     bool has_gt_ = false;
+    std::optional<double> last_rtk_yaw_deg_;
+
+    // Latest VIO sample cache (used for init alignment and delta predict)
+    bool has_vio_ = false;
+    double last_vio_x_ = 0.0, last_vio_y_ = 0.0, last_vio_yaw_deg_ = 0.0;
+    int64_t last_vio_ts_ns_ = 0;
 
     // Stats
     struct FineStats {

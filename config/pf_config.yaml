@@ -13,21 +13,21 @@ particle_filter:
   n_dispersed: 300               # combo_F: more particles for noise robustness (was 200)
   n_tracking: 150                # combo_F: (was 100)
   sigma_pos_dispersed: 2.0
-  sigma_pos_tracking: 0.5       # RTK-tuned: tight process noise (was 3.0 for VIO)
+  sigma_pos_tracking: 0.3       # VIO: minimal pos noise; bias state carries drift
   sigma_hdg_dispersed: 10.0
   sigma_hdg_tracking: 2.0
   
   # Drift noise: simulates VIO-like uncertainty, forces PF to rely on matching
-  drift_noise_m_per_s: 1.5     # simulate VIO drift
+  drift_noise_m_per_s: 0.0     # simulate VIO drift
   drift_noise_hdg_per_s: 0.0      # 1.5x position drift
   sigma_obs_coarse: 10.0         # tight coarse pull
-  sigma_obs_fine: 5.0            # base observation sigma
+  sigma_obs_fine: 3.0            # base observation sigma — tightened for strong VIO fine matches
   top_k_coarse: 5
   ess_threshold_fraction: 0.5
   init_altitude_m: 25.0          # match altitude_min_process_m; RTK-init doesn't need VPR
   converge_spread_m: 40.0        # enter CONVERGING earlier
   tracking_spread_m: 20.0        # enter TRACKING earlier
-  lost_spread_m: 150.0
+  lost_spread_m: 80.0            # trigger LOST recovery earlier (was 150; filter got stuck at spread 50)
   fine_every_n_frames: 2          # more frequent corrections
   fine_early_exit_inliers: 15    # jetson: cascade — stop fine matching once inliers >= this
   fine_min_inliers_heading: 12
@@ -44,7 +44,7 @@ particle_filter:
   static_threshold_m: 0.15         # RTK delta below this = static
   static_sigma_scale: 0.1          # process noise multiplier when static
   # Fine match consistency gate (0 = disabled)
-  fine_consistency_max_m: 15.0     # base gate; scaled by inlier tiers in code
+  fine_consistency_max_m: 18.0     # base gate (code applies 1.5x for PnP + spread + trust scaling)
   pnp_altitude_gate_m: 15.0       # reject PnP if |pnp_alt - baro_alt| exceeds this
   fine_force_inliers: 0             # disabled
   # Roughening: jitter after resampling to prevent particle collapse
@@ -63,14 +63,14 @@ particle_filter:
   adaptive_sigma_obs_fine_rtk: 5.0
   adaptive_roughen_scale_rtk: 0.5
   adaptive_sigma_pos_vio: 3.0
-  adaptive_sigma_obs_fine_vio: 5.0
+  adaptive_sigma_obs_fine_vio: 3.0
   adaptive_roughen_scale_vio: 2.0
 
   # ── Bias model (5-state PF) ──
-  sigma_bias_random_walk: 0.05    # m/step bias drift (~0.5 m/s at 10Hz)
+  sigma_bias_random_walk: 0.30    # m/step bias drift — bias absorbs VIO drift instead of position noise
   sigma_bias_init: 0.01           # initial bias uncertainty (near zero)
-  bias_clamp_m: 10.0              # max bias magnitude (prevents runaway with RTK motion)
-  vio_jump_threshold_m: 20.0      # per-step displacement to trigger jump detection (RTK: 5m/s is normal flight)
+  bias_clamp_m: 25.0              # max bias magnitude (VIO: needs headroom to absorb drift)
+  vio_jump_threshold_m: 4.0       # per-step VIO displacement to trigger jump absorption (real VIO jumps ~1-3m)
   vio_jump_velocity_ema_alpha: 0.3
   obs_min_inliers_apply: 30       # base threshold at ref altitude (scales up with altitude)
   obs_min_inliers_ref_alt: 50.0   # reference altitude for adaptive scaling
@@ -78,6 +78,8 @@ particle_filter:
   inlier_tau: 80.0                # PF trust curve: tuned for LiteSAM (up to ~300 inliers)
   init_lat: 0.0                    # preconfigured init position (0 = use RTK)
   init_lon: 0.0
+  init_yaw: 0.0                   # ENU heading at init (deg; 0 = use RTK yaw)
+  vio_yaw_offset_deg: -90.0       # added to VIO quat yaw before alignment (empirical for ov_srvins)
   init_sigma_pos: 0.2             # tight RTK init (m)
   init_sigma_hdg: 2.0             # degrees
   # LOST recovery
@@ -186,6 +188,7 @@ replay:
   rtk_topic: "/m300/rtk/fix"
   yaw_topic: "/m300/rtk/yaw"
   altimeter_topic: "/altimeter/range"
+  vio_pose_topic: "/ov_srvins/vio/pose"
   start_offset_s: 50.0        # skip this many seconds from bag start
   camera_subsample: 3           # tuned: best avg across noise levels (~7Hz at 20Hz camera)
   altitude_min_process_m: 25.0  # skip camera frames if median altitude below this

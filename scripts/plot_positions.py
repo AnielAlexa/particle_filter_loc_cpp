@@ -27,6 +27,7 @@ class PositionPlotter(Node):
         # Storage
         self.rtk_positions = []   # [(lat, lon, time)]
         self.pf_positions = []    # [(lat, lon, time)]
+        self.vio_positions = []   # [(lat, lon, time)]
         self.pf_state = "UNINIT"
 
         # Load GPS metadata for patch boundaries
@@ -59,6 +60,8 @@ class PositionPlotter(Node):
             NavSatFix, "/m300/rtk/fix", self.rtk_cb, qos_reliable)
         self.sub_pf = self.create_subscription(
             NavSatFix, "/pf_geo_loc/position", self.pf_cb, qos_reliable)
+        self.sub_vio = self.create_subscription(
+            NavSatFix, "/pf_geo_loc/vio_position", self.vio_cb, qos_reliable)
         self.sub_state = self.create_subscription(
             String, "/pf_geo_loc/state", self.state_cb, qos_reliable)
 
@@ -148,6 +151,10 @@ class PositionPlotter(Node):
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.pf_positions.append((msg.latitude, msg.longitude, t))
 
+    def vio_cb(self, msg):
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.vio_positions.append((msg.latitude, msg.longitude, t))
+
     def state_cb(self, msg):
         self.pf_state = msg.data
 
@@ -178,6 +185,14 @@ class PositionPlotter(Node):
             cv2.circle(img, pts[-1], 8, (0, 255, 0), -1, cv2.LINE_AA)
             cv2.circle(img, pts[-1], 8, (255, 255, 255), 2, cv2.LINE_AA)
 
+        # Draw VIO trail (blue, dead-reckoned)
+        if len(self.vio_positions) >= 2:
+            pts = [self._latlon_to_px(lat, lon) for lat, lon, _ in self.vio_positions]
+            for i in range(1, len(pts)):
+                cv2.line(img, pts[i - 1], pts[i], (255, 120, 0), 2, cv2.LINE_AA)
+            cv2.circle(img, pts[-1], 6, (255, 120, 0), -1, cv2.LINE_AA)
+            cv2.circle(img, pts[-1], 6, (255, 255, 255), 1, cv2.LINE_AA)
+
         # Draw PF trail (red)
         if len(self.pf_positions) >= 2:
             pts = [self._latlon_to_px(lat, lon) for lat, lon, _ in self.pf_positions]
@@ -195,19 +210,21 @@ class PositionPlotter(Node):
                     0.6, (0, 220, 0), 2, cv2.LINE_AA)
         cv2.putText(img, "PF (estimated)", (15, y0 + 25), cv2.FONT_HERSHEY_SIMPLEX,
                     0.6, (0, 0, 255), 2, cv2.LINE_AA)
-        cv2.putText(img, f"State: {self.pf_state}", (15, y0 + 50),
+        cv2.putText(img, "VIO (dead-reckoned)", (15, y0 + 50), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6, (255, 120, 0), 2, cv2.LINE_AA)
+        cv2.putText(img, f"State: {self.pf_state}", (15, y0 + 75),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
-        cv2.putText(img, f"RTK: {len(self.rtk_positions)} | PF: {len(self.pf_positions)} pts",
-                    (15, y0 + 75), cv2.FONT_HERSHEY_SIMPLEX,
+        cv2.putText(img, f"RTK:{len(self.rtk_positions)} PF:{len(self.pf_positions)} VIO:{len(self.vio_positions)}",
+                    (15, y0 + 100), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, (200, 200, 200), 1, cv2.LINE_AA)
 
         if errors:
             median_err = np.median(errors)
             mean_err = np.mean(errors)
             max_err = np.max(errors)
-            cv2.putText(img, f"Median error: {median_err:.1f}m", (15, y0 + 100),
+            cv2.putText(img, f"Median error: {median_err:.1f}m", (15, y0 + 125),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2, cv2.LINE_AA)
-            cv2.putText(img, f"Mean: {mean_err:.1f}m | Max: {max_err:.1f}m", (15, y0 + 125),
+            cv2.putText(img, f"Mean: {mean_err:.1f}m | Max: {max_err:.1f}m", (15, y0 + 150),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
 
         return img

@@ -28,7 +28,7 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
     pf_ = std::make_unique<ParticleFilter>(cfg_.pf);
     obs_ = std::make_unique<ObservationModel>(cfg_.matchers, enu_);
     trust_ = std::make_unique<TrustTracker>(cfg_.trust);
-    motion_.set_jump_params(cfg_.pf.vio_jump_threshold_m, cfg_.pf.vio_jump_velocity_ema_alpha);
+    vio_motion_.set_jump_params(cfg_.pf.vio_jump_threshold_m, cfg_.pf.vio_jump_velocity_ema_alpha);
 
     // QoS
     rclcpp::QoS qos_sensor(1);
@@ -51,8 +51,13 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
         cfg_.replay.altimeter_topic, 10,
         std::bind(&PFGeoLocNode::alt_callback, this, std::placeholders::_1));
 
+    sub_vio_pose_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        cfg_.replay.vio_pose_topic, 50,
+        std::bind(&PFGeoLocNode::vio_pose_callback, this, std::placeholders::_1));
+
     // Publishers
     pub_position_ = create_publisher<sensor_msgs::msg::NavSatFix>("/pf_geo_loc/position", 10);
+    pub_vio_position_ = create_publisher<sensor_msgs::msg::NavSatFix>("/pf_geo_loc/vio_position", 10);
     pub_ess_ = create_publisher<std_msgs::msg::Float32>("/pf_geo_loc/ess", 10);
     pub_state_ = create_publisher<std_msgs::msg::String>("/pf_geo_loc/state", 10);
 
@@ -181,58 +186,125 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
         std::vector<float> sorted(altitude_buf_.begin(), altitude_buf_.end());
         std::sort(sorted.begin(), sorted.end());
         float median_alt = sorted[sorted.size() / 2];
-
-        if (pf_->try_init(median_alt)) {
-
-
-
-
-
-            initialized_ = true;
-            RCLCPP_INFO(get_logger(), "Altitude gate passed: %.1f m", median_alt);
-
-            // Seed PF: preconfigured position > RTK fallback
-            double seed_lat = 0.0, seed_lon = 0.0;
-            std::string seed_source;
-            if (cfg_.pf.init_lat != 0.0 && cfg_.pf.init_lon != 0.0) {
-                seed_lat = cfg_.pf.init_lat;
-                seed_lon = cfg_.pf.init_lon;
-                seed_source = "config";
-            } else if (has_gt_) {
-                seed_lat = gt_lat_;
-                seed_lon = gt_lon_;
-                seed_source = "RTK";
-            }
-
-            if (seed_lat != 0.0) {
-                auto [e, n] = enu_.wgs84_to_enu(seed_lat, seed_lon);
-                pf_->seed_from_position(e, n, 0.0,
-                    cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
-                RCLCPP_INFO(get_logger(), "%s init: lat=%.6f lon=%.6f -> ENU(%.1f, %.1f)",
-                    seed_source.c_str(), seed_lat, seed_lon, e, n);
-            }
-        }
+        try_initialize(median_alt);
     }
 }
 
+void PFGeoLocNode::try_initialize(float median_alt) {
+    if (initialized_) return;
+    if (!pf_->try_init(median_alt)) return;
+    if (!has_vio_) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Init: altitude OK (%.1f m) - waiting for VIO pose", median_alt);
+        return;
+    }
+
+    double enu_yaw_deg = 0.0;
+    std::string yaw_source;
+    if (cfg_.pf.init_yaw != 0.0) {
+        enu_yaw_deg = cfg_.pf.init_yaw;
+        yaw_source = "config";
+    } else if (last_rtk_yaw_deg_.has_value()) {
+        enu_yaw_deg = *last_rtk_yaw_deg_;
+        yaw_source = "RTK";
+    } else {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Init: altitude+VIO OK - waiting for RTK yaw (init_yaw=0)");
+        return;
+    }
+
+    double seed_lat = 0.0, seed_lon = 0.0;
+    std::string seed_source;
+    if (cfg_.pf.init_lat != 0.0 && cfg_.pf.init_lon != 0.0) {
+        seed_lat = cfg_.pf.init_lat;
+        seed_lon = cfg_.pf.init_lon;
+        seed_source = "config";
+    } else if (has_gt_) {
+        seed_lat = gt_lat_;
+        seed_lon = gt_lon_;
+        seed_source = "RTK";
+    } else {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Init: waiting for RTK fix (init_lat/lon=0)");
+        return;
+    }
+
+    auto [e, n] = enu_.wgs84_to_enu(seed_lat, seed_lon);
+    pf_->seed_from_position(e, n, enu_yaw_deg,
+        cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
+
+    double vio_yaw_adj = wrap360(last_vio_yaw_deg_ + cfg_.pf.vio_yaw_offset_deg);
+    vio_motion_.align(last_vio_x_, last_vio_y_, vio_yaw_adj, enu_yaw_deg);
+
+    // Cache VIO→ENU mapping for dead-reckoned publication
+    vio_ref_x_ = last_vio_x_;
+    vio_ref_y_ = last_vio_y_;
+    double alpha = vio_motion_.align_theta_deg() * M_PI / 180.0;
+    vio_align_cos_ = std::cos(alpha);
+    vio_align_sin_ = std::sin(alpha);
+    init_enu_e_ = e;
+    init_enu_n_ = n;
+
+    initialized_ = true;
+    RCLCPP_INFO(get_logger(),
+        "INIT: alt=%.1f m | pos(%s) lat=%.6f lon=%.6f -> ENU(%.1f, %.1f) | "
+        "yaw(%s)=%.1f deg | VIO ref=(%.2f, %.2f) vio_yaw=%.1f -> align_theta=%.1f",
+        median_alt, seed_source.c_str(), seed_lat, seed_lon, e, n,
+        yaw_source.c_str(), enu_yaw_deg,
+        last_vio_x_, last_vio_y_, last_vio_yaw_deg_,
+        vio_motion_.align_theta_deg());
+}
+
 void PFGeoLocNode::yaw_callback(const std_msgs::msg::Float64::ConstSharedPtr& msg) {
-    motion_.set_yaw(msg->data);
+    last_rtk_yaw_deg_ = msg->data * 10.0;
 }
 
 void PFGeoLocNode::rtk_callback(const sensor_msgs::msg::NavSatFix::ConstSharedPtr& msg) {
     gt_lat_ = msg->latitude;
     gt_lon_ = msg->longitude;
     has_gt_ = true;
+}
 
+void PFGeoLocNode::vio_pose_callback(
+    const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg) {
     int64_t ts_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1000000000LL +
                     msg->header.stamp.nanosec;
+    const auto& p = msg->pose.pose.position;
+    const auto& q = msg->pose.pose.orientation;
+    double yaw_deg = quat_to_yaw_deg(q.x, q.y, q.z, q.w);
 
-    if (initialized_ && pf_->phase() != Phase::UNINIT) {
-        auto delta = motion_.update(ts_ns, msg->latitude, msg->longitude);
-        if (delta.has_value())
-            pf_->predict(delta.value());
-    } else {
-        motion_.update(ts_ns, msg->latitude, msg->longitude);
+    last_vio_x_ = p.x;
+    last_vio_y_ = p.y;
+    last_vio_yaw_deg_ = yaw_deg;
+    last_vio_ts_ns_ = ts_ns;
+    has_vio_ = true;
+
+    if (initialized_ && vio_motion_.is_aligned() && pf_->phase() != Phase::UNINIT) {
+        double yaw_adj = wrap360(yaw_deg + cfg_.pf.vio_yaw_offset_deg);
+        auto delta = vio_motion_.update(ts_ns, p.x, p.y, yaw_adj);
+        if (delta.has_value()) {
+            pf_->predict(*delta);
+            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                "[VIO] raw=(%.2f, %.2f, yaw_math=%.1f) enu_delta=(%+.3f, %+.3f) "
+                "hdg_compass=%.1f rtk_compass=%.1f",
+                p.x, p.y, yaw_deg, delta->dx_m, delta->dy_m,
+                delta->heading_deg,
+                last_rtk_yaw_deg_.value_or(-1.0));
+        }
+
+        // Publish dead-reckoned VIO position in WGS84 for plotting/diagnostics
+        double dx_v = p.x - vio_ref_x_;
+        double dy_v = p.y - vio_ref_y_;
+        double enu_e = init_enu_e_ + vio_align_cos_ * dx_v - vio_align_sin_ * dy_v;
+        double enu_n = init_enu_n_ + vio_align_sin_ * dx_v + vio_align_cos_ * dy_v;
+        auto [vlat, vlon] = enu_.enu_to_wgs84(enu_e, enu_n);
+        sensor_msgs::msg::NavSatFix vio_msg;
+        vio_msg.header.stamp = msg->header.stamp;
+        vio_msg.header.frame_id = "vio_aligned";
+        vio_msg.latitude = vlat;
+        vio_msg.longitude = vlon;
+        vio_msg.altitude = 0.0;
+        pub_vio_position_->publish(vio_msg);
     }
 }
 
@@ -511,8 +583,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             {
                 // Double verification: reconstruct satellite at candidate position, re-match
                 // Primary can be weak — verification match must confirm with enough inliers
-                double verify_heading = primary_fine->heading_deg.value_or(
-                    motion_.current_yaw()) + cfg_.camera.heading_offset_deg;
+                double verify_heading = primary_fine->heading_deg.value_or(est_h)
+                                        + cfg_.camera.heading_offset_deg;
                 bool verified = false;
                 double agreement_m = 999.0;
 

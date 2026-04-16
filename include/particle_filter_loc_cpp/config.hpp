@@ -66,6 +66,9 @@ struct PFConfig {
     // Initialization
     double init_lat = 0.0;              // preconfigured init position (0 = use RTK)
     double init_lon = 0.0;
+    double init_yaw = 0.0;              // ENU heading at init (degrees; 0 = use RTK yaw)
+    double vio_yaw_offset_deg = -90.0;  // added to VIO quaternion yaw before alignment
+                                        // (compensates position-vs-orientation frame mismatch)
     double init_sigma_pos = 0.2;
     double init_sigma_hdg = 2.0;
 
@@ -164,6 +167,7 @@ struct ReplayConfig {
     std::string rtk_topic = "/m300/rtk/fix";
     std::string yaw_topic = "/m300/rtk/yaw";
     std::string altimeter_topic = "/altimeter/range";
+    std::string vio_pose_topic = "/ov_srvins/vio/pose";
 };
 
 struct FullConfig {
