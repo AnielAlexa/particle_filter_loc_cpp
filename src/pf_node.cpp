@@ -183,17 +183,10 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
         float median_alt = sorted[sorted.size() / 2];
 
         if (pf_->try_init(median_alt)) {
-            initialized_ = true;
-            RCLCPP_INFO(get_logger(), "Altitude gate passed: %.1f m", median_alt);
-
-            // RTK init: seed PF from RTK position if available
-            if (has_gt_) {
-                auto [e, n] = enu_.wgs84_to_enu(gt_lat_, gt_lon_);
-                pf_->seed_from_position(e, n, 0.0,
-                    cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
-                RCLCPP_INFO(get_logger(), "RTK init: lat=%.6f lon=%.6f -> ENU(%.1f, %.1f)",
-                    gt_lat_, gt_lon_, e, n);
-            }
+            // Mark altitude ready — actual seed happens in rtk_callback
+            // with the next fresh RTK fix (avoids stale position from bag start)
+            altitude_init_ready_ = true;
+            RCLCPP_INFO(get_logger(), "Altitude gate passed: %.1f m — waiting for fresh RTK", median_alt);
         }
     }
 }
@@ -209,6 +202,16 @@ void PFGeoLocNode::rtk_callback(const sensor_msgs::msg::NavSatFix::ConstSharedPt
 
     int64_t ts_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1000000000LL +
                     msg->header.stamp.nanosec;
+
+    // Seed PF from the first fresh RTK after altitude gate passes
+    if (!initialized_ && altitude_init_ready_) {
+        auto [e, n] = enu_.wgs84_to_enu(msg->latitude, msg->longitude);
+        pf_->seed_from_position(e, n, 0.0,
+            cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
+        initialized_ = true;
+        RCLCPP_INFO(get_logger(), "RTK init (fresh): lat=%.6f lon=%.6f -> ENU(%.1f, %.1f)",
+            msg->latitude, msg->longitude, e, n);
+    }
 
     if (initialized_ && pf_->phase() != Phase::UNINIT) {
         auto delta = motion_.update(ts_ns, msg->latitude, msg->longitude);

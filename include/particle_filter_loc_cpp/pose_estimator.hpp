@@ -23,6 +23,12 @@ struct HomographyResult {
     std::vector<bool> inlier_mask;
 };
 
+struct CentroidResult {
+    double lat, lon;
+    int inliers;           // number of inliers used
+    double spread_m;       // std dev of individual estimates (quality metric)
+};
+
 class PoseEstimator {
 public:
     PoseEstimator(double fx, double fy, double cx, double cy,
@@ -45,6 +51,15 @@ public:
         const Eigen::MatrixXf& mkpts_patch,
         const FlatMeta& meta,
         int drone_res);
+
+    // Inlier centroid: average position from matched keypoints
+    // Uses camera intrinsics + altitude to back-project drone pixels to ground offsets
+    // Optionally uses PnP inlier mask to filter matches; if empty, uses all matches
+    std::optional<CentroidResult> solve_centroid(
+        const Eigen::MatrixXf& mkpts_drone,
+        const Eigen::MatrixXf& mkpts_patch_px,
+        const FlatMeta& meta,
+        const std::vector<bool>& inlier_mask = {});
 
 private:
     double fx_, fy_, cx_, cy_;

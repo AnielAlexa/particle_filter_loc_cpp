@@ -243,6 +243,7 @@ std::optional<FineResult> ObservationModel::fine_match(
         }
     }
 
+    // No fallback: when PnP fails, skip rather than apply a bad correction
     return std::nullopt;
 }
 
@@ -291,15 +292,7 @@ std::optional<FineResult> ObservationModel::fine_match_on_satellite(
                          flow.flow_heading_deg, match_out.num_matches, r.estimated_altitude};
     }
 
-    // Homography fallback
-    auto homo_result = pose_->solve_homography(match_out.keypoints0, mkpts1_northup, north_meta, res);
-    if (homo_result.has_value() && homo_result->inliers >= cfg_.min_inliers_homography) {
-        auto& r = homo_result.value();
-        return FineResult{r.lat, r.lon, r.inliers, "homography", std::nullopt,
-                         "satellite", flow.flow_consistency, flow.flow_magnitude_cv,
-                         static_cast<float>(r.inliers) / match_out.num_matches,
-                         flow.flow_heading_deg, match_out.num_matches, 0.0};
-    }
+    // No fallback: when PnP fails, skip rather than apply a bad correction
 
     return std::nullopt;
 }

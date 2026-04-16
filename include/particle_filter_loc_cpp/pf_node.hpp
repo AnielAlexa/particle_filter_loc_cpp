@@ -61,6 +61,7 @@ private:
     std::atomic<bool> processing_{false};
     std::mutex processing_mutex_;
     bool initialized_ = false;
+    bool altitude_init_ready_ = false;
     bool first_init_camera_ = true;
     int frame_count_ = 0;
     double gt_lat_ = 0, gt_lon_ = 0;

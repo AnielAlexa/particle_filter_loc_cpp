@@ -260,4 +260,74 @@ std::optional<HomographyResult> PoseEstimator::solve_homography(
     return result;
 }
 
+std::optional<CentroidResult> PoseEstimator::solve_centroid(
+    const Eigen::MatrixXf& mkpts_drone,
+    const Eigen::MatrixXf& mkpts_patch_px,
+    const FlatMeta& meta,
+    const std::vector<bool>& inlier_mask)
+{
+    int n = mkpts_drone.rows();
+    if (n < 3) return std::nullopt;
+    if (altitude_m_ <= 0.0) return std::nullopt;
+
+    double center_lat = (meta.min_lat + meta.max_lat) / 2.0;
+    double center_lon = (meta.min_lon + meta.max_lon) / 2.0;
+    double cos_lat = std::cos(center_lat * M_PI / 180.0);
+
+    // Collect per-match camera position estimates
+    std::vector<double> est_x, est_y;  // in local ENU meters
+
+    for (int i = 0; i < n; ++i) {
+        if (!inlier_mask.empty() && !inlier_mask[i]) continue;
+
+        // Patch keypoint → GPS → local ENU
+        double kp_lat = meta.max_lat - mkpts_patch_px(i, 1) *
+                        (meta.max_lat - meta.min_lat) / (meta.patch_h - 1);
+        double kp_lon = meta.min_lon + mkpts_patch_px(i, 0) *
+                        (meta.max_lon - meta.min_lon) / (meta.patch_w - 1);
+        double ground_x = (kp_lon - center_lon) * cos_lat * 111319.5;
+        double ground_y = (kp_lat - center_lat) * 111319.5;
+
+        // Drone keypoint → offset from image center → ground offset in meters
+        double dx_px = mkpts_drone(i, 0) - cx_;
+        double dy_px = mkpts_drone(i, 1) - cy_;
+        double offset_x = dx_px * altitude_m_ / fx_;
+        double offset_y = dy_px * altitude_m_ / fy_;
+
+        // Camera nadir = ground point - offset
+        est_x.push_back(ground_x - offset_x);
+        est_y.push_back(ground_y - offset_y);
+    }
+
+    int n_used = static_cast<int>(est_x.size());
+    if (n_used < 3) return std::nullopt;
+
+    // Robust averaging: median instead of mean to reject outliers
+    std::vector<double> sx(est_x), sy(est_y);
+    std::sort(sx.begin(), sx.end());
+    std::sort(sy.begin(), sy.end());
+    double med_x = sx[n_used / 2];
+    double med_y = sy[n_used / 2];
+
+    // Compute spread (std dev from median) as quality metric
+    double sum_sq = 0.0;
+    for (int i = 0; i < n_used; ++i) {
+        double dx = est_x[i] - med_x;
+        double dy = est_y[i] - med_y;
+        sum_sq += dx * dx + dy * dy;
+    }
+    double spread = std::sqrt(sum_sq / n_used);
+
+    // Convert back to GPS
+    double cam_lat = center_lat + med_y / 111319.5;
+    double cam_lon = center_lon + med_x / (111319.5 * cos_lat);
+
+    CentroidResult result;
+    result.lat = cam_lat;
+    result.lon = cam_lon;
+    result.inliers = n_used;
+    result.spread_m = spread;
+    return result;
+}
+
 }  // namespace pf
