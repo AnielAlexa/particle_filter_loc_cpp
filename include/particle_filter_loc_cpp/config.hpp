@@ -55,7 +55,8 @@ struct PFConfig {
     // Bias model (Phase 2+)
     double sigma_bias_random_walk = 0.05;   // m/step bias drift
     double sigma_bias_init = 0.01;          // initial bias uncertainty
-    double vio_jump_threshold_m = 5.0;      // displacement triggering jump detection
+    double bias_clamp_m = 10.0;             // max bias magnitude (prevents runaway)
+    double vio_jump_threshold_m = 20.0;     // displacement triggering jump detection (RTK: high)
     double vio_jump_velocity_ema_alpha = 0.3;
     int obs_min_inliers_apply = 10;         // min inliers to apply observation
     double inlier_tau = 25.0;               // trust curve: score = 1 - exp(-inliers/tau)

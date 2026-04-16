@@ -85,6 +85,7 @@ FullConfig load_config(const std::string& yaml_path) {
         // Bias model
         pf.sigma_bias_random_walk = get(p, "sigma_bias_random_walk", pf.sigma_bias_random_walk);
         pf.sigma_bias_init = get(p, "sigma_bias_init", pf.sigma_bias_init);
+        pf.bias_clamp_m = get(p, "bias_clamp_m", pf.bias_clamp_m);
         pf.vio_jump_threshold_m = get(p, "vio_jump_threshold_m", pf.vio_jump_threshold_m);
         pf.vio_jump_velocity_ema_alpha = get(p, "vio_jump_velocity_ema_alpha", pf.vio_jump_velocity_ema_alpha);
         pf.obs_min_inliers_apply = get(p, "obs_min_inliers_apply", pf.obs_min_inliers_apply);

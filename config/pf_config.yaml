@@ -69,9 +69,10 @@ particle_filter:
   # ── Bias model (5-state PF) ──
   sigma_bias_random_walk: 0.05    # m/step bias drift (~0.5 m/s at 10Hz)
   sigma_bias_init: 0.01           # initial bias uncertainty (near zero)
-  vio_jump_threshold_m: 5.0       # per-step displacement to trigger jump detection
+  bias_clamp_m: 10.0              # max bias magnitude (prevents runaway with RTK motion)
+  vio_jump_threshold_m: 20.0      # per-step displacement to trigger jump detection (RTK: 5m/s is normal flight)
   vio_jump_velocity_ema_alpha: 0.3
-  obs_min_inliers_apply: 8        # skip observation update below this
+  obs_min_inliers_apply: 20       # skip observation update below this (LiteSAM: <20 is noise)
   inlier_tau: 80.0                # PF trust curve: tuned for LiteSAM (up to ~300 inliers)
   init_sigma_pos: 0.2             # tight RTK init (m)
   init_sigma_hdg: 2.0             # degrees

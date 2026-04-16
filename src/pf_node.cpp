@@ -383,7 +383,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
             (void)corr_dist;  // logged in CSV
             RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s — skip coarse (drift=%.2f)",
-                frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
+                frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(),
+                corr_dist);
             pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
                           std::nullopt, std::nullopt, best_fine->method);
             fine_succeeded = true;
@@ -451,7 +452,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
                 (void)corr_dist;  // logged in CSV
                 RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse (drift=%.2f)",
-                    frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(), corr_dist);
+                    frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(),
+                    corr_dist);
                 pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
                               std::nullopt, std::nullopt, best_fine->method);
                 diag_fine_source = best_fine->patch_name;

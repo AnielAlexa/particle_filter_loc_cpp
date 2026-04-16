@@ -104,6 +104,20 @@ void ParticleFilter::predict(const MotionDelta& delta) {
         }
     }
 
+    // Clamp bias magnitude to prevent runaway
+    if (cfg_.bias_clamp_m > 0.0) {
+        for (int i = 0; i < n; ++i) {
+            double bx = particles_(i, COL_BIAS_X);
+            double by = particles_(i, COL_BIAS_Y);
+            double bmag = std::sqrt(bx * bx + by * by);
+            if (bmag > cfg_.bias_clamp_m) {
+                double scale = cfg_.bias_clamp_m / bmag;
+                particles_(i, COL_BIAS_X) *= scale;
+                particles_(i, COL_BIAS_Y) *= scale;
+            }
+        }
+    }
+
     // Legacy drift noise (will be removed in Phase 6)
     if (!is_static_ && !delta.is_jump && cfg_.drift_noise_m_per_s > 0.0 && delta.dt_s > 0.0) {
         double drift_sigma = cfg_.drift_noise_m_per_s * std::sqrt(delta.dt_s);
