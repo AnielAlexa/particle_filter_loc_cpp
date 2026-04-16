@@ -61,7 +61,9 @@ struct PFConfig {
     int obs_min_inliers_apply = 10;         // min inliers to apply observation
     double inlier_tau = 25.0;               // trust curve: score = 1 - exp(-inliers/tau)
 
-    // Initialization (Phase 4+)
+    // Initialization
+    double init_lat = 0.0;              // preconfigured init position (0 = use RTK)
+    double init_lon = 0.0;
     double init_sigma_pos = 0.2;
     double init_sigma_hdg = 2.0;
 

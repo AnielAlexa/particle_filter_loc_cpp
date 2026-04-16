@@ -90,6 +90,8 @@ FullConfig load_config(const std::string& yaml_path) {
         pf.vio_jump_velocity_ema_alpha = get(p, "vio_jump_velocity_ema_alpha", pf.vio_jump_velocity_ema_alpha);
         pf.obs_min_inliers_apply = get(p, "obs_min_inliers_apply", pf.obs_min_inliers_apply);
         pf.inlier_tau = get(p, "inlier_tau", pf.inlier_tau);
+        pf.init_lat = get(p, "init_lat", pf.init_lat);
+        pf.init_lon = get(p, "init_lon", pf.init_lon);
         pf.init_sigma_pos = get(p, "init_sigma_pos", pf.init_sigma_pos);
         pf.init_sigma_hdg = get(p, "init_sigma_hdg", pf.init_sigma_hdg);
         pf.lost_recovery_min_inliers = get(p, "lost_recovery_min_inliers", pf.lost_recovery_min_inliers);

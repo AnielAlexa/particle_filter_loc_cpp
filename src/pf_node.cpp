@@ -183,10 +183,29 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
         float median_alt = sorted[sorted.size() / 2];
 
         if (pf_->try_init(median_alt)) {
-            // Mark altitude ready — actual seed happens in rtk_callback
-            // with the next fresh RTK fix (avoids stale position from bag start)
-            altitude_init_ready_ = true;
-            RCLCPP_INFO(get_logger(), "Altitude gate passed: %.1f m — waiting for fresh RTK", median_alt);
+            initialized_ = true;
+            RCLCPP_INFO(get_logger(), "Altitude gate passed: %.1f m", median_alt);
+
+            // Seed PF: preconfigured position > RTK fallback
+            double seed_lat = 0.0, seed_lon = 0.0;
+            std::string seed_source;
+            if (cfg_.pf.init_lat != 0.0 && cfg_.pf.init_lon != 0.0) {
+                seed_lat = cfg_.pf.init_lat;
+                seed_lon = cfg_.pf.init_lon;
+                seed_source = "config";
+            } else if (has_gt_) {
+                seed_lat = gt_lat_;
+                seed_lon = gt_lon_;
+                seed_source = "RTK";
+            }
+
+            if (seed_lat != 0.0) {
+                auto [e, n] = enu_.wgs84_to_enu(seed_lat, seed_lon);
+                pf_->seed_from_position(e, n, 0.0,
+                    cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
+                RCLCPP_INFO(get_logger(), "%s init: lat=%.6f lon=%.6f -> ENU(%.1f, %.1f)",
+                    seed_source.c_str(), seed_lat, seed_lon, e, n);
+            }
         }
     }
 }
@@ -202,16 +221,6 @@ void PFGeoLocNode::rtk_callback(const sensor_msgs::msg::NavSatFix::ConstSharedPt
 
     int64_t ts_ns = static_cast<int64_t>(msg->header.stamp.sec) * 1000000000LL +
                     msg->header.stamp.nanosec;
-
-    // Seed PF from the first fresh RTK after altitude gate passes
-    if (!initialized_ && altitude_init_ready_) {
-        auto [e, n] = enu_.wgs84_to_enu(msg->latitude, msg->longitude);
-        pf_->seed_from_position(e, n, 0.0,
-            cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
-        initialized_ = true;
-        RCLCPP_INFO(get_logger(), "RTK init (fresh): lat=%.6f lon=%.6f -> ENU(%.1f, %.1f)",
-            msg->latitude, msg->longitude, e, n);
-    }
 
     if (initialized_ && pf_->phase() != Phase::UNINIT) {
         auto delta = motion_.update(ts_ns, msg->latitude, msg->longitude);
