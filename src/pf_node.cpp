@@ -364,8 +364,21 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         }
         // Stage B: Mosaic disabled — satellite only
 
+        // PnP altitude gate: reject if PnP altitude disagrees with barometer
+        auto altitude_gate_ok = [&](const auto& fine) -> bool {
+            if (fine.method != "pnp" || fine.pnp_altitude <= 0.0 || obs.altitude_m <= 0.0)
+                return true;
+            double alt_delta = std::abs(fine.pnp_altitude - obs.altitude_m);
+            if (alt_delta > cfg_.pf.pnp_altitude_gate_m) {
+                RCLCPP_WARN(get_logger(), "F%d PnP alt gate: pnp=%.1f baro=%.1f delta=%.1f > %.1f — rejected",
+                    frame_count_, fine.pnp_altitude, obs.altitude_m, alt_delta, cfg_.pf.pnp_altitude_gate_m);
+                return false;
+            }
+            return true;
+        };
+
         // If satellite succeeded with enough inliers, apply and skip coarse
-        if (best_fine.has_value() && best_fine->inliers >= early_exit) {
+        if (best_fine.has_value() && best_fine->inliers >= early_exit && altitude_gate_ok(*best_fine)) {
             auto [fe, fn] = enu_.wgs84_to_enu(best_fine->lat, best_fine->lon);
             double corr_dist = std::sqrt((fe - est_e) * (fe - est_e) + (fn - est_n) * (fn - est_n));
             (void)corr_dist;  // logged in CSV
@@ -429,7 +442,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             }
 
             // Apply best fine result (from any stage)
-            if (best_fine.has_value()) {
+            if (best_fine.has_value() && altitude_gate_ok(*best_fine)) {
                 // Track which stage won
                 if (best_fine->patch_name != "satellite")
                     { stats_.patch_ok++; stats_.total_patch_inliers += best_fine->inliers; }

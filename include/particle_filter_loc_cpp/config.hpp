@@ -35,6 +35,7 @@ struct PFConfig {
     double static_threshold_m = 0.15;
     double static_sigma_scale = 0.1;
     double fine_consistency_max_m = 40.0;
+    double pnp_altitude_gate_m = 15.0;   // reject PnP if |pnp_alt - baro_alt| > this
     int fine_force_inliers = 0;
     bool roughen_enabled = true;
     double roughen_scale = 2.0;

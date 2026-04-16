@@ -241,14 +241,15 @@ bool ParticleFilter::update_fine(
     // Inlier trust score: smooth exponential curve
     double trust = 1.0 - std::exp(-static_cast<double>(inliers) / cfg_.inlier_tau);
 
-    // Consistency gate: only for homography (PnP is more reliable, let it through)
-    if (cfg_.fine_consistency_max_m > 0.0 && !sigma_override.has_value()
-        && method != "pnp") {
+    // Consistency gate: PnP gets 2x wider base than homography
+    if (cfg_.fine_consistency_max_m > 0.0 && !sigma_override.has_value()) {
         auto [est_e, est_n, est_h] = estimate();
         double dist = std::sqrt((fine_east - est_e) * (fine_east - est_e) +
                                 (fine_north - est_n) * (fine_north - est_n));
         double spread = weighted_spread();
-        double max_dist = cfg_.fine_consistency_max_m + spread * 2.0;
+        double base = cfg_.fine_consistency_max_m;
+        if (method == "pnp") base *= 2.0;  // PnP is more reliable, wider gate
+        double max_dist = base + spread * 2.0;
         // Trust bonus: high-inlier matches get wider acceptance
         max_dist *= (1.0 + 0.5 * trust);
         if (dist > max_dist) return false;

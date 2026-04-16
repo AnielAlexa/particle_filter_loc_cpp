@@ -65,6 +65,7 @@ FullConfig load_config(const std::string& yaml_path) {
         pf.static_threshold_m = get(p, "static_threshold_m", pf.static_threshold_m);
         pf.static_sigma_scale = get(p, "static_sigma_scale", pf.static_sigma_scale);
         pf.fine_consistency_max_m = get(p, "fine_consistency_max_m", pf.fine_consistency_max_m);
+        pf.pnp_altitude_gate_m = get(p, "pnp_altitude_gate_m", pf.pnp_altitude_gate_m);
         pf.fine_force_inliers = get(p, "fine_force_inliers", pf.fine_force_inliers);
         pf.roughen_enabled = get(p, "roughen_enabled", pf.roughen_enabled);
         pf.roughen_scale = get(p, "roughen_scale", pf.roughen_scale);
