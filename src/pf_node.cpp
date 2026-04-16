@@ -183,6 +183,11 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
         float median_alt = sorted[sorted.size() / 2];
 
         if (pf_->try_init(median_alt)) {
+
+
+
+
+
             initialized_ = true;
             RCLCPP_INFO(get_logger(), "Altitude gate passed: %.1f m", median_alt);
 
@@ -398,7 +403,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(),
                 corr_dist);
             pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
-                          std::nullopt, std::nullopt, best_fine->method);
+                          std::nullopt, std::nullopt, best_fine->method, obs.altitude_m);
             fine_succeeded = true;
             stats_.skip_coarse++;
             diag_fine_source = best_fine->patch_name;
@@ -467,7 +472,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                     frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(),
                     corr_dist);
                 pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
-                              std::nullopt, std::nullopt, best_fine->method);
+                              std::nullopt, std::nullopt, best_fine->method, obs.altitude_m);
                 diag_fine_source = best_fine->patch_name;
                 diag_fine_method = best_fine->method;
                 diag_fine_inliers = best_fine->inliers;

@@ -241,13 +241,21 @@ bool ParticleFilter::update_fine(
     std::optional<double> heading_deg,
     std::optional<double> sigma_override,
     std::optional<double> kappa_override,
-    const std::string& method)
+    const std::string& method,
+    double altitude_m)
 {
     if (!initialized_) return false;
     if (std::isnan(fine_east) || std::isnan(fine_north)) return false;
 
-    // Inlier gating: skip update when matcher is unreliable
-    if (inliers < cfg_.obs_min_inliers_apply && !sigma_override.has_value())
+    // Adaptive inlier gating: scale threshold with altitude
+    int effective_threshold = cfg_.obs_min_inliers_apply;
+    if (altitude_m > 0.0 && cfg_.obs_min_inliers_ref_alt > 0.0) {
+        double scale = altitude_m / cfg_.obs_min_inliers_ref_alt;
+        effective_threshold = static_cast<int>(cfg_.obs_min_inliers_apply * scale);
+        effective_threshold = std::min(effective_threshold, cfg_.obs_min_inliers_max);
+        effective_threshold = std::max(effective_threshold, cfg_.obs_min_inliers_apply);
+    }
+    if (inliers < effective_threshold && !sigma_override.has_value())
         return false;
 
     int N = particles_.rows();

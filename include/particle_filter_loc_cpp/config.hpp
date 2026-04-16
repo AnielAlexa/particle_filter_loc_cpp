@@ -58,7 +58,9 @@ struct PFConfig {
     double bias_clamp_m = 10.0;             // max bias magnitude (prevents runaway)
     double vio_jump_threshold_m = 20.0;     // displacement triggering jump detection (RTK: high)
     double vio_jump_velocity_ema_alpha = 0.3;
-    int obs_min_inliers_apply = 10;         // min inliers to apply observation
+    int obs_min_inliers_apply = 10;         // min inliers to apply observation (at ref altitude)
+    double obs_min_inliers_ref_alt = 50.0;  // reference altitude for adaptive threshold
+    int obs_min_inliers_max = 80;           // upper clamp
     double inlier_tau = 25.0;               // trust curve: score = 1 - exp(-inliers/tau)
 
     // Initialization

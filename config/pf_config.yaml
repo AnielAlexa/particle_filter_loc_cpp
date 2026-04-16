@@ -72,7 +72,9 @@ particle_filter:
   bias_clamp_m: 10.0              # max bias magnitude (prevents runaway with RTK motion)
   vio_jump_threshold_m: 20.0      # per-step displacement to trigger jump detection (RTK: 5m/s is normal flight)
   vio_jump_velocity_ema_alpha: 0.3
-  obs_min_inliers_apply: 30       # skip observation update below this (LiteSAM: <40 blocks bad drift jumps)
+  obs_min_inliers_apply: 30       # base threshold at ref altitude (scales up with altitude)
+  obs_min_inliers_ref_alt: 50.0   # reference altitude for adaptive scaling
+  obs_min_inliers_max: 80         # upper clamp (don't over-filter)
   inlier_tau: 80.0                # PF trust curve: tuned for LiteSAM (up to ~300 inliers)
   init_lat: 0.0                    # preconfigured init position (0 = use RTK)
   init_lon: 0.0
