@@ -332,12 +332,31 @@ bool ParticleFilter::update_fine(
         flow_penalty = std::clamp(flow_penalty, 1.0, cfg_.flow_mag_cv_max_penalty);
     }
 
+    // Sanity brake: inflate sigma when the voted centroid is far from the PF's
+    // current bias-corrected weighted mean. Scene aliasing can produce tight,
+    // consistent wrong clusters; this softly down-weights them without a hard
+    // reject. Quadratic beyond the gate, capped.
+    double corr_penalty = 1.0;
+    if (!sigma_override.has_value() && cfg_.corr_dist_sigma_gate_m > 0.0) {
+        double sum_w = weights_.sum();
+        if (sum_w > 0.0) {
+            Eigen::VectorXd w_norm = weights_ / sum_w;
+            double mean_e = ((particles_.col(COL_X) - particles_.col(COL_BIAS_X)).array() * w_norm.array()).sum();
+            double mean_n = ((particles_.col(COL_Y) - particles_.col(COL_BIAS_Y)).array() * w_norm.array()).sum();
+            double corr_d = std::hypot(fine_east - mean_e, fine_north - mean_n);
+            if (corr_d > cfg_.corr_dist_sigma_gate_m) {
+                double r = corr_d / cfg_.corr_dist_sigma_gate_m;
+                corr_penalty = std::clamp(r * r, 1.0, cfg_.corr_dist_sigma_max);
+            }
+        }
+    }
+
     double sigma;
     if (sigma_override.has_value()) {
         sigma = sigma_override.value();
     } else {
         double scale = 1.0 / (0.2 + 0.8 * trust);
-        sigma = cfg_.sigma_obs_fine * scale * flow_penalty;
+        sigma = cfg_.sigma_obs_fine * scale * flow_penalty * corr_penalty;
     }
 
     double sigma2 = 2.0 * sigma * sigma;

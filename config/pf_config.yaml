@@ -49,6 +49,8 @@ particle_filter:
   min_inlier_ratio: 0.40          # reject fine match if inlier_ratio below this (kills ~32% of surviving wrong matches, loses 5% correct)
   flow_mag_cv_ref: 0.30             # sigma penalty ref CV: sigma *= clamp(ref/cv, 1, max). 0 = disabled
   flow_mag_cv_max_penalty: 4.0      # cap on sigma inflation from low flow-CV (aliased scenes)
+  corr_dist_sigma_gate_m: 20.0      # sanity brake: inflate sigma when vote centroid >this from PF mean. 0 = off
+  corr_dist_sigma_max: 6.0          # cap on sigma inflation from large correction
   fine_force_inliers: 0             # disabled
   # Roughening: jitter after resampling to prevent particle collapse
   roughen_enabled: true
@@ -93,7 +95,7 @@ particle_filter:
   vote_enabled: true
   vote_window_size: 6
   vote_min_agree: 3
-  vote_agreement_m: 10.0
+  vote_agreement_m: 11.0
   vote_max_age_frames: 15
   # Note: fine_consistency_max_m gate is now a no-op while vote_enabled=true.
 

@@ -68,6 +68,8 @@ FullConfig load_config(const std::string& yaml_path) {
         pf.pnp_altitude_gate_m = get(p, "pnp_altitude_gate_m", pf.pnp_altitude_gate_m);
         pf.flow_mag_cv_ref = get(p, "flow_mag_cv_ref", pf.flow_mag_cv_ref);
         pf.flow_mag_cv_max_penalty = get(p, "flow_mag_cv_max_penalty", pf.flow_mag_cv_max_penalty);
+        pf.corr_dist_sigma_gate_m = get(p, "corr_dist_sigma_gate_m", pf.corr_dist_sigma_gate_m);
+        pf.corr_dist_sigma_max = get(p, "corr_dist_sigma_max", pf.corr_dist_sigma_max);
         pf.fine_force_inliers = get(p, "fine_force_inliers", pf.fine_force_inliers);
         pf.roughen_enabled = get(p, "roughen_enabled", pf.roughen_enabled);
         pf.roughen_scale = get(p, "roughen_scale", pf.roughen_scale);

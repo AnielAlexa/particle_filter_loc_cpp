@@ -39,6 +39,8 @@ struct PFConfig {
     float min_inlier_ratio = 0.40f;       // reject fine match if inlier_ratio below this
     double flow_mag_cv_ref = 0.0;         // reference CV: penalty=1 at/above this; 0 = disabled
     double flow_mag_cv_max_penalty = 4.0; // cap on sigma inflation from low flow-CV
+    double corr_dist_sigma_gate_m = 0.0;  // sanity brake: inflate sigma when vote-centroid is >this far from PF mean; 0 = disabled
+    double corr_dist_sigma_max = 6.0;     // cap on sigma inflation from large correction
     int fine_force_inliers = 0;
     bool roughen_enabled = true;
     double roughen_scale = 2.0;
