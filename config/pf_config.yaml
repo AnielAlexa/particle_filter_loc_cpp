@@ -153,6 +153,8 @@ trust:
 matchers:
   script_dir: "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
   # ── Coarse matcher switch ─────────────────────────────────────────────
+  # coarse is loaded for LOST recovery only; Stage C fallback is hard-disabled in pf_node.cpp
+  coarse_enabled: true
   use_vlad: false
   # VLAD (timm DINOv3 + hard-assignment VLAD, no TRT required)
   vlad_codebook_path:    "data/descriptors_vlad_l10_aerial/vlad_codebook.pt"

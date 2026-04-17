@@ -499,8 +499,9 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             diag_inl_ratio = best_fine->inlier_ratio;
         }
 
-        // Stage C: Need coarse for single-patch fallback
-        if (!fine_succeeded) {
+        // Stage C disabled: coarse + single-patch fallback had ~0% success in practice.
+        // Coarse is still used for LOST recovery below.
+        if (false) {
             // Run coarse match
             const std::vector<int>* candidates = nullptr;
             std::vector<int> candidate_vec;

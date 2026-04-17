@@ -16,7 +16,8 @@ public:
     DescriptorDatabase(const std::string& npy_path,
                        const std::string& patch_names_path,
                        const std::string& gps_metadata_path,
-                       const ENUFrame& enu);
+                       const ENUFrame& enu,
+                       bool load_descriptors = true);
 
     // Cosine similarity top-K search
     CoarseResult cosine_top_k(const float* query_desc, int desc_dim,

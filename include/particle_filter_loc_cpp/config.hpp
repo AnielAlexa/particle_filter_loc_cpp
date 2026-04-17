@@ -129,6 +129,7 @@ struct TrustConfig {
 
 struct MatcherConfig {
     std::string script_dir;
+    bool coarse_enabled = true;  // false: skip VLAD TRT engine + descriptor DB load (saves RAM/GPU) and skip Stage C fallback
     bool use_vlad_trt = true;
     std::string vlad_trt_engine_path;
     std::string vlad_database_path;

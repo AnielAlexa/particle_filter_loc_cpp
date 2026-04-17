@@ -123,10 +123,29 @@ DescriptorDatabase::DescriptorDatabase(
     const std::string& npy_path,
     const std::string& patch_names_path,
     const std::string& gps_metadata_path,
-    const ENUFrame& enu)
+    const ENUFrame& enu,
+    bool load_descriptors)
 {
-    load_npy(npy_path);
-    load_patch_names(patch_names_path);
+    if (load_descriptors) {
+        load_npy(npy_path);
+        load_patch_names(patch_names_path);
+    } else {
+        // Metadata-only mode: skip the large .npy descriptor matrix.
+        // load_patch_names checks n_patches_, so derive it from the names file instead.
+        std::ifstream f(patch_names_path);
+        if (!f.is_open())
+            throw std::runtime_error("Cannot open patch names: " + patch_names_path);
+        std::string line;
+        while (std::getline(f, line)) {
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' '))
+                line.pop_back();
+            if (!line.empty())
+                patch_names_.push_back(line);
+        }
+        n_patches_ = static_cast<int>(patch_names_.size());
+        desc_dim_ = 0;
+        std::cout << "[DB] Metadata-only: " << n_patches_ << " patches (descriptors skipped)" << std::endl;
+    }
     load_gps_metadata(gps_metadata_path, enu);
 }
 

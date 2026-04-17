@@ -77,16 +77,20 @@ ObservationModel::ObservationModel(const MatcherConfig& cfg, const ENUFrame& enu
 
     std::string gps_path = script_dir_ + "/" + cfg.gps_metadata_path;
 
-    // Load descriptor database
-    db_ = std::make_unique<DescriptorDatabase>(db_npy_path, names_path, gps_path, enu);
+    // Load descriptor database (metadata-only when coarse disabled — saves RAM, still need patch centers)
+    db_ = std::make_unique<DescriptorDatabase>(db_npy_path, names_path, gps_path, enu, cfg.coarse_enabled);
 
-    // Load coarse matcher
-    std::string coarse_engine;
-    if (cfg.use_vlad_trt)
-        coarse_engine = script_dir_ + "/" + cfg.vlad_trt_engine_path;
-    else
-        coarse_engine = script_dir_ + "/" + cfg.boq_engine_path;
-    coarse_ = std::make_unique<CoarseMatcher>(coarse_engine, *db_, *vpi_, cfg.image_size);
+    // Load coarse matcher (skip TRT engine allocation when disabled)
+    if (cfg.coarse_enabled) {
+        std::string coarse_engine;
+        if (cfg.use_vlad_trt)
+            coarse_engine = script_dir_ + "/" + cfg.vlad_trt_engine_path;
+        else
+            coarse_engine = script_dir_ + "/" + cfg.boq_engine_path;
+        coarse_ = std::make_unique<CoarseMatcher>(coarse_engine, *db_, *vpi_, cfg.image_size);
+    } else {
+        std::cout << "[ObservationModel] coarse_enabled=false — VLAD TRT engine not loaded" << std::endl;
+    }
 
     // Load fine matcher
     std::string fine_engine = script_dir_ + "/" + cfg.fine_engine_path;
@@ -115,6 +119,8 @@ CoarseResult ObservationModel::coarse_match(
     const uint8_t* mono_data, int width, int height,
     const std::vector<int>* candidate_indices, int top_k)
 {
+    if (!coarse_)
+        return CoarseResult{};  // coarse disabled — return empty result
     return coarse_->match(mono_data, width, height, candidate_indices, top_k);
 }
 

@@ -150,6 +150,7 @@ FullConfig load_config(const std::string& yaml_path) {
     if (auto m = root["matchers"]) {
         auto& mc = cfg.matchers;
         mc.script_dir = get<std::string>(m, "script_dir", mc.script_dir);
+        mc.coarse_enabled = get(m, "coarse_enabled", mc.coarse_enabled);
         mc.use_vlad_trt = get(m, "use_vlad_trt", mc.use_vlad_trt);
         mc.vlad_trt_engine_path = get<std::string>(m, "vlad_trt_engine_path", mc.vlad_trt_engine_path);
         mc.vlad_database_path = get<std::string>(m, "vlad_database_path", mc.vlad_database_path);

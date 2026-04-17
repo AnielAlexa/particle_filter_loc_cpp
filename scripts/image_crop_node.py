@@ -28,7 +28,7 @@ class ImageCropNode(Node):
         self.declare_parameter("input_topic", "/camera/image_mono")
         self.declare_parameter("output_topic", "/camera/image_rect")
         self.declare_parameter("output_size", 320)
-        self.declare_parameter("subsample", 3)
+        self.declare_parameter("subsample", 2)
 
         input_topic = self.get_parameter("input_topic").value
         output_topic = self.get_parameter("output_topic").value
