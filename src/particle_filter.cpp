@@ -242,7 +242,8 @@ bool ParticleFilter::update_fine(
     std::optional<double> sigma_override,
     std::optional<double> kappa_override,
     const std::string& method,
-    double altitude_m)
+    double altitude_m,
+    float flow_mag_cv)
 {
     if (!initialized_) return false;
     if (std::isnan(fine_east) || std::isnan(fine_north)) return false;
@@ -324,12 +325,19 @@ bool ParticleFilter::update_fine(
     // trust=0 → sigma = base/0.2 = 5x base (very loose)
     // trust=0.5 → sigma = base/0.6 = 1.67x base
     // trust=1.0 → sigma = base/1.0 = base (tight)
+    double flow_penalty = 1.0;
+    if (!sigma_override.has_value() && cfg_.flow_mag_cv_ref > 0.0) {
+        double cv = std::max(static_cast<double>(flow_mag_cv), 0.02);
+        flow_penalty = cfg_.flow_mag_cv_ref / cv;
+        flow_penalty = std::clamp(flow_penalty, 1.0, cfg_.flow_mag_cv_max_penalty);
+    }
+
     double sigma;
     if (sigma_override.has_value()) {
         sigma = sigma_override.value();
     } else {
         double scale = 1.0 / (0.2 + 0.8 * trust);
-        sigma = cfg_.sigma_obs_fine * scale;
+        sigma = cfg_.sigma_obs_fine * scale * flow_penalty;
     }
 
     double sigma2 = 2.0 * sigma * sigma;

@@ -47,6 +47,8 @@ particle_filter:
   fine_consistency_max_m: 18.0     # base gate (code applies 1.5x for PnP + spread + trust scaling)
   pnp_altitude_gate_m: 15.0       # reject PnP if |pnp_alt - baro_alt| exceeds this
   min_inlier_ratio: 0.40          # reject fine match if inlier_ratio below this (kills ~32% of surviving wrong matches, loses 5% correct)
+  flow_mag_cv_ref: 0.30             # sigma penalty ref CV: sigma *= clamp(ref/cv, 1, max). 0 = disabled
+  flow_mag_cv_max_penalty: 4.0      # cap on sigma inflation from low flow-CV (aliased scenes)
   fine_force_inliers: 0             # disabled
   # Roughening: jitter after resampling to prevent particle collapse
   roughen_enabled: true

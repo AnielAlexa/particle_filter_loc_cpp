@@ -484,7 +484,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(),
                 corr_dist);
             bool accepted = pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
-                          std::nullopt, std::nullopt, best_fine->method, obs.altitude_m);
+                          std::nullopt, std::nullopt, best_fine->method, obs.altitude_m,
+                          best_fine->flow_magnitude_cv);
             fine_succeeded = accepted;
             stats_.skip_coarse++;
             diag_fine_source = accepted ? best_fine->patch_name : ("rej:" + best_fine->patch_name);
@@ -554,7 +555,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                     frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(),
                     corr_dist);
                 bool accepted = pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
-                              std::nullopt, std::nullopt, best_fine->method, obs.altitude_m);
+                              std::nullopt, std::nullopt, best_fine->method, obs.altitude_m,
+                              best_fine->flow_magnitude_cv);
                 diag_fine_source = accepted ? best_fine->patch_name : ("rej:" + best_fine->patch_name);
                 diag_fine_method = best_fine->method;
                 diag_fine_inliers = accepted ? best_fine->inliers : -best_fine->inliers;

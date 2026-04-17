@@ -37,6 +37,8 @@ struct PFConfig {
     double fine_consistency_max_m = 40.0;
     double pnp_altitude_gate_m = 15.0;   // reject PnP if |pnp_alt - baro_alt| > this
     float min_inlier_ratio = 0.40f;       // reject fine match if inlier_ratio below this
+    double flow_mag_cv_ref = 0.0;         // reference CV: penalty=1 at/above this; 0 = disabled
+    double flow_mag_cv_max_penalty = 4.0; // cap on sigma inflation from low flow-CV
     int fine_force_inliers = 0;
     bool roughen_enabled = true;
     double roughen_scale = 2.0;

@@ -42,7 +42,8 @@ public:
                      std::optional<double> sigma_override = std::nullopt,
                      std::optional<double> kappa_override = std::nullopt,
                      const std::string& method = "",
-                     double altitude_m = 0.0);
+                     double altitude_m = 0.0,
+                     float flow_mag_cv = 1.0f);
 
     // Global correction (LOST recovery)
     void apply_global_correction(double east, double north,
