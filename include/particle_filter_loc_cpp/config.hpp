@@ -36,6 +36,7 @@ struct PFConfig {
     double static_sigma_scale = 0.1;
     double fine_consistency_max_m = 40.0;
     double pnp_altitude_gate_m = 15.0;   // reject PnP if |pnp_alt - baro_alt| > this
+    float min_inlier_ratio = 0.40f;       // reject fine match if inlier_ratio below this
     int fine_force_inliers = 0;
     bool roughen_enabled = true;
     double roughen_scale = 2.0;
@@ -72,7 +73,15 @@ struct PFConfig {
     double init_sigma_pos = 0.2;
     double init_sigma_hdg = 2.0;
 
+    // Sliding-window match voting (replaces gate + consensus)
+    bool vote_enabled = true;
+    int vote_window_size = 6;          // keep last N fine matches
+    int vote_min_agree = 3;            // at least this many matches (incl. current) must cluster
+    double vote_agreement_m = 15.0;    // matches within this distance = same cluster
+    int vote_max_age_frames = 15;      // drop matches older than this many camera frames
+
     // LOST recovery (Phase 5+)
+    int lost_fine_stale_frames = 60;  // no accepted fine match for this many frames → LOST
     int lost_recovery_min_inliers = 15;
     double lost_recovery_verify_agreement_m = 20.0;
     double lost_recovery_sigma_pos = 2.0;

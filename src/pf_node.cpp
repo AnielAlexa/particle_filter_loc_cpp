@@ -453,14 +453,23 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         }
         // Stage B: Mosaic disabled — satellite only
 
-        // PnP altitude gate: reject if PnP altitude disagrees with barometer
+        // Upstream gates: reject bad matches before they can poison the voting cluster.
+        // 1. PnP altitude gate: reject if PnP altitude disagrees with barometer.
+        // 2. Inlier-ratio gate: correct matches have median ratio ~0.70, wrong ~0.51 —
+        //    floor kills a chunk of surviving wrong matches that altitude alone can't.
         auto altitude_gate_ok = [&](const auto& fine) -> bool {
-            if (fine.method != "pnp" || fine.pnp_altitude <= 0.0 || obs.altitude_m <= 0.0)
-                return true;
-            double alt_delta = std::abs(fine.pnp_altitude - obs.altitude_m);
-            if (alt_delta > cfg_.pf.pnp_altitude_gate_m) {
-                RCLCPP_WARN(get_logger(), "F%d PnP alt gate: pnp=%.1f baro=%.1f delta=%.1f > %.1f — rejected",
-                    frame_count_, fine.pnp_altitude, obs.altitude_m, alt_delta, cfg_.pf.pnp_altitude_gate_m);
+            if (fine.method == "pnp" && fine.pnp_altitude > 0.0 && obs.altitude_m > 0.0) {
+                double alt_delta = std::abs(fine.pnp_altitude - obs.altitude_m);
+                if (alt_delta > cfg_.pf.pnp_altitude_gate_m) {
+                    RCLCPP_WARN(get_logger(), "F%d PnP alt gate: pnp=%.1f baro=%.1f delta=%.1f > %.1f — rejected",
+                        frame_count_, fine.pnp_altitude, obs.altitude_m, alt_delta, cfg_.pf.pnp_altitude_gate_m);
+                    return false;
+                }
+            }
+            if (cfg_.pf.min_inlier_ratio > 0.0f && fine.inlier_ratio > 0.0f &&
+                fine.inlier_ratio < cfg_.pf.min_inlier_ratio) {
+                RCLCPP_WARN(get_logger(), "F%d inlier_ratio gate: %.2f < %.2f — rejected",
+                    frame_count_, fine.inlier_ratio, cfg_.pf.min_inlier_ratio);
                 return false;
             }
             return true;
@@ -474,13 +483,13 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s — skip coarse (drift=%.2f)",
                 frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(),
                 corr_dist);
-            pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
+            bool accepted = pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
                           std::nullopt, std::nullopt, best_fine->method, obs.altitude_m);
-            fine_succeeded = true;
+            fine_succeeded = accepted;
             stats_.skip_coarse++;
-            diag_fine_source = best_fine->patch_name;
+            diag_fine_source = accepted ? best_fine->patch_name : ("rej:" + best_fine->patch_name);
             diag_fine_method = best_fine->method;
-            diag_fine_inliers = best_fine->inliers;
+            diag_fine_inliers = accepted ? best_fine->inliers : -best_fine->inliers;
             diag_corr_dist = corr_dist;
             diag_pnp_alt = best_fine->pnp_altitude;
             diag_fine_lat = best_fine->lat;
@@ -543,11 +552,11 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 RCLCPP_INFO(get_logger(), "F%d fine %s inliers=%d %s + coarse (drift=%.2f)",
                     frame_count_, best_fine->patch_name.c_str(), best_fine->inliers, best_fine->method.c_str(),
                     corr_dist);
-                pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
+                bool accepted = pf.update_fine(fe, fn, best_fine->inliers, best_fine->heading_deg,
                               std::nullopt, std::nullopt, best_fine->method, obs.altitude_m);
-                diag_fine_source = best_fine->patch_name;
+                diag_fine_source = accepted ? best_fine->patch_name : ("rej:" + best_fine->patch_name);
                 diag_fine_method = best_fine->method;
-                diag_fine_inliers = best_fine->inliers;
+                diag_fine_inliers = accepted ? best_fine->inliers : -best_fine->inliers;
                 diag_corr_dist = corr_dist;
                 diag_pnp_alt = best_fine->pnp_altitude;
                 diag_fine_lat = best_fine->lat;

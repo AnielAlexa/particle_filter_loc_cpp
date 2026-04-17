@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <optional>
 #include <random>
 #include <tuple>
@@ -81,9 +82,20 @@ private:
     Eigen::VectorXd weights_;    // [N]
     std::mt19937_64 rng_;
     int frame_count_ = 0;
+    int frames_since_fine_ = 0;  // for staleness-based LOST detection
     bool is_static_ = false;
     bool motion_detected_ = false;
     bool initialized_ = false;
+
+    // Sliding-window match voting: keep recent fine matches (regardless of
+    // whether they agreed with PF) so we can apply the cluster centroid
+    // rather than trust a single observation.
+    struct RecentMatch {
+        double e, n;
+        int inliers;
+        int age;  // camera-frame count since push
+    };
+    std::deque<RecentMatch> recent_matches_;
 };
 
 }  // namespace pf

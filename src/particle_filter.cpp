@@ -263,18 +263,62 @@ bool ParticleFilter::update_fine(
     // Inlier trust score: smooth exponential curve
     double trust = 1.0 - std::exp(-static_cast<double>(inliers) / cfg_.inlier_tau);
 
-    // Consistency gate: PnP gets 2x wider base than homography
-    if (cfg_.fine_consistency_max_m > 0.0 && !sigma_override.has_value()) {
-        auto [est_e, est_n, est_h] = estimate();
-        double dist = std::sqrt((fine_east - est_e) * (fine_east - est_e) +
-                                (fine_north - est_n) * (fine_north - est_n));
-        double spread = weighted_spread();
-        double base = cfg_.fine_consistency_max_m;
-        if (method == "pnp") base *= 1.5;
-        double max_dist = base + spread * 1.0;     // was *2.0 — too generous with spread
-        max_dist *= (1.0 + 0.4 * trust);            // was 0.5 — mild cap
-        if (dist > max_dist) return false;
+    // ── Sliding-window match voting (replaces gate + consensus) ──
+    // Record this match into the recent window, then cluster: only apply the
+    // observation if ≥K recent matches (including this one) agree within
+    // `agreement_m` of each other. The applied position is the cluster centroid.
+    // PF no longer gates matches against its own estimate — it smooths over
+    // observation clusters. Singleton matches update nothing.
+    double vote_fine_east = fine_east;
+    double vote_fine_north = fine_north;
+    if (!sigma_override.has_value() && cfg_.vote_enabled) {
+        recent_matches_.push_back({fine_east, fine_north, inliers, 0});
+        while ((int)recent_matches_.size() > cfg_.vote_window_size)
+            recent_matches_.pop_front();
+
+        // Warm-up: if the window is too small to possibly form a quorum,
+        // accept the match directly. Prevents startup lockout where the
+        // first K-1 matches are silently dropped and PF never initializes
+        // off VIO predict.
+        bool warm_up = (int)recent_matches_.size() < cfg_.vote_min_agree;
+
+        // Find the largest cluster within agreement_m of the current match
+        int agree = 1;
+        double sum_e = fine_east, sum_n = fine_north;
+        double sum_w = static_cast<double>(inliers);
+        double sum_we = fine_east * sum_w, sum_wn = fine_north * sum_w;
+        for (auto it = recent_matches_.begin(); it != recent_matches_.end(); ++it) {
+            // skip the last entry (current match, already counted)
+            if (it + 1 == recent_matches_.end()) continue;
+            double de = it->e - fine_east;
+            double dn = it->n - fine_north;
+            if (std::sqrt(de * de + dn * dn) <= cfg_.vote_agreement_m) {
+                agree++;
+                sum_e += it->e;
+                sum_n += it->n;
+                double w = static_cast<double>(it->inliers);
+                sum_w += w;
+                sum_we += it->e * w;
+                sum_wn += it->n * w;
+            }
+        }
+        if (!warm_up && agree < cfg_.vote_min_agree) {
+            // Not enough agreement — treat as noise, don't update PF
+            return false;
+        }
+        if (!warm_up) {
+            // Use inlier-weighted centroid of the agreeing cluster as the observation
+            if (sum_w > 0.0) {
+                vote_fine_east = sum_we / sum_w;
+                vote_fine_north = sum_wn / sum_w;
+            } else {
+                vote_fine_east = sum_e / agree;
+                vote_fine_north = sum_n / agree;
+            }
+        }
     }
+    fine_east = vote_fine_east;
+    fine_north = vote_fine_north;
 
     // Determine sigma: smooth scaling from trust score
     // trust=0 → sigma = base/0.2 = 5x base (very loose)
@@ -332,6 +376,7 @@ bool ParticleFilter::update_fine(
         weights_ /= total;
     else
         weights_.setConstant(N, 1.0 / N);
+    frames_since_fine_ = 0;
     return true;
 }
 
@@ -408,10 +453,22 @@ void ParticleFilter::systematic_resample() {
 void ParticleFilter::check_transitions() {
     if (!initialized_) return;
     double spread = weighted_spread();
+    frames_since_fine_++;
+
+    // Age recent match window — drop entries older than the voting window.
+    // Measured in camera frames (check_transitions is called once per camera frame).
+    for (auto& m : recent_matches_) m.age++;
+    while (!recent_matches_.empty() &&
+           recent_matches_.front().age > cfg_.vote_max_age_frames) {
+        recent_matches_.pop_front();
+    }
 
     switch (phase_) {
     case Phase::TRACKING:
-        if (spread > cfg_.lost_spread_m) {
+        // LOST triggers: (a) spread blew up, or (b) no fine match for too long
+        // (tight cloud at wrong location — classic "confidently wrong")
+        if (spread > cfg_.lost_spread_m ||
+            frames_since_fine_ > cfg_.lost_fine_stale_frames) {
             phase_ = Phase::LOST;
             frame_count_ = 0;
         }

@@ -102,6 +102,13 @@ FullConfig load_config(const std::string& yaml_path) {
         pf.lost_recovery_verify_agreement_m = get(p, "lost_recovery_verify_agreement_m", pf.lost_recovery_verify_agreement_m);
         pf.lost_recovery_sigma_pos = get(p, "lost_recovery_sigma_pos", pf.lost_recovery_sigma_pos);
         pf.lost_recovery_sigma_hdg = get(p, "lost_recovery_sigma_hdg", pf.lost_recovery_sigma_hdg);
+        pf.lost_fine_stale_frames = get(p, "lost_fine_stale_frames", pf.lost_fine_stale_frames);
+        pf.min_inlier_ratio = static_cast<float>(get(p, "min_inlier_ratio", static_cast<double>(pf.min_inlier_ratio)));
+        pf.vote_enabled = get(p, "vote_enabled", pf.vote_enabled);
+        pf.vote_window_size = get(p, "vote_window_size", pf.vote_window_size);
+        pf.vote_min_agree = get(p, "vote_min_agree", pf.vote_min_agree);
+        pf.vote_agreement_m = get(p, "vote_agreement_m", pf.vote_agreement_m);
+        pf.vote_max_age_frames = get(p, "vote_max_age_frames", pf.vote_max_age_frames);
     }
 
     // Trust

@@ -46,6 +46,7 @@ particle_filter:
   # Fine match consistency gate (0 = disabled)
   fine_consistency_max_m: 18.0     # base gate (code applies 1.5x for PnP + spread + trust scaling)
   pnp_altitude_gate_m: 15.0       # reject PnP if |pnp_alt - baro_alt| exceeds this
+  min_inlier_ratio: 0.40          # reject fine match if inlier_ratio below this (kills ~32% of surviving wrong matches, loses 5% correct)
   fine_force_inliers: 0             # disabled
   # Roughening: jitter after resampling to prevent particle collapse
   roughen_enabled: true
@@ -82,7 +83,20 @@ particle_filter:
   vio_yaw_offset_deg: -90.0       # added to VIO quat yaw before alignment (empirical for ov_srvins)
   init_sigma_pos: 0.2             # tight RTK init (m)
   init_sigma_hdg: 2.0             # degrees
+  # Sliding-window match voting (approach A): replaces gate + consensus.
+  # PF no longer gates matches against its own estimate. Matches go into a
+  # recent-window; only the inlier-weighted centroid of the agreeing cluster
+  # (≥vote_min_agree of last vote_window_size matches within vote_agreement_m)
+  # is applied to the PF. Single outlier matches update nothing.
+  vote_enabled: true
+  vote_window_size: 6
+  vote_min_agree: 3
+  vote_agreement_m: 12.0
+  vote_max_age_frames: 15
+  # Note: fine_consistency_max_m gate is now a no-op while vote_enabled=true.
+
   # LOST recovery
+  lost_fine_stale_frames: 1000     # no accepted fine match for N frames → LOST (only truly-lost regions)
   lost_recovery_min_inliers: 15
   lost_recovery_verify_agreement_m: 20.0
   lost_recovery_sigma_pos: 2.0
