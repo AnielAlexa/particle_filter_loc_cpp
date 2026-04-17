@@ -91,12 +91,12 @@ particle_filter:
   vote_enabled: true
   vote_window_size: 6
   vote_min_agree: 3
-  vote_agreement_m: 12.0
+  vote_agreement_m: 10.0
   vote_max_age_frames: 15
   # Note: fine_consistency_max_m gate is now a no-op while vote_enabled=true.
 
   # LOST recovery
-  lost_fine_stale_frames: 1000     # no accepted fine match for N frames → LOST (only truly-lost regions)
+  lost_fine_stale_frames: 1500     # no accepted fine match for N frames → LOST (only truly-lost regions)
   lost_recovery_min_inliers: 15
   lost_recovery_verify_agreement_m: 20.0
   lost_recovery_sigma_pos: 2.0
@@ -192,7 +192,7 @@ matchers:
   min_inliers: 8
   min_inliers_homography: 8
   mosaic_context_scale: 1.3       # mosaic crop = footprint_diagonal * this
-  satellite_context_scale: 1.1   # satellite crop expansion (more context for matching)
+  satellite_context_scale: 1.2   # satellite crop expansion (more context for matching)
 
 init:
   lock_n_frames: 4          # consecutive top-1 hits before seeding
