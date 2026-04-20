@@ -77,6 +77,13 @@ struct PFConfig {
     double init_sigma_pos = 0.2;
     double init_sigma_hdg = 2.0;
 
+    // Pre-takeoff yaw lock: capture VIO↔ENU rotation on the ground before
+    // the drone starts climbing, so any body rotation during the 0→init_altitude
+    // "blind" window doesn't rely on a single noisy instantaneous sample.
+    int yaw_lock_buffer_size = 20;
+    double yaw_lock_max_stddev_deg = 1.0;
+    double yaw_lock_max_altitude_m = 3.0;
+
     // Sliding-window match voting (replaces gate + consensus)
     bool vote_enabled = true;
     int vote_window_size = 6;          // keep last N fine matches

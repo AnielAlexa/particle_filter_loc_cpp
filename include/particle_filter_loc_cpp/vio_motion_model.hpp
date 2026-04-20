@@ -46,18 +46,33 @@ public:
     // convention (ψ_compass = 90 − ψ_math).
     void align(double vio_x, double vio_y, double vio_yaw_math_deg,
                double enu_yaw_compass_deg) {
+        lock_yaw(vio_yaw_math_deg, enu_yaw_compass_deg);
+        pin_position(vio_x, vio_y);
+    }
+
+    // Phase 1: lock rotation between VIO and ENU frames. Can be called before
+    // takeoff once stable VIO and RTK yaw samples are available; the resulting
+    // align_theta is a pure frame offset and is invariant to rotation/translation.
+    void lock_yaw(double vio_yaw_math_deg, double enu_yaw_compass_deg) {
         double enu_yaw_math = wrap360(90.0 - enu_yaw_compass_deg);
         align_theta_deg_ = wrap360(enu_yaw_math - vio_yaw_math_deg);
         double t = align_theta_deg_ * M_PI / 180.0;
         cos_theta_ = std::cos(t);
         sin_theta_ = std::sin(t);
+        yaw_locked_ = true;
+    }
+
+    // Phase 2: pin the VIO frame origin. Must be called at the moment the ENU
+    // seed position is chosen (altitude threshold). Requires lock_yaw() first.
+    void pin_position(double vio_x, double vio_y) {
         prev_vio_x_ = vio_x;
         prev_vio_y_ = vio_y;
         aligned_ = true;
-        has_prev_ = false;  // first update() after align() seeds prev timestamp
+        has_prev_ = false;  // first update() after pin seeds prev timestamp
     }
 
     bool is_aligned() const { return aligned_; }
+    bool is_yaw_locked() const { return yaw_locked_; }
     double align_theta_deg() const { return align_theta_deg_; }
 
     std::optional<MotionDelta> update(int64_t timestamp_ns,
@@ -112,6 +127,7 @@ public:
 
 private:
     bool aligned_ = false;
+    bool yaw_locked_ = false;
     bool has_prev_ = false;
     double align_theta_deg_ = 0.0;
     double cos_theta_ = 1.0;

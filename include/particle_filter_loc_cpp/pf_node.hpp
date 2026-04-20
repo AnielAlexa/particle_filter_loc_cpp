@@ -38,6 +38,7 @@ private:
     void alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& msg);
     void vio_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg);
     void try_initialize(float median_alt);
+    void try_lock_yaw();
     void process_frame(const uint8_t* mono_data, int width, int height,
                        const builtin_interfaces::msg::Time& stamp);
 
@@ -83,6 +84,12 @@ private:
     bool has_vio_ = false;
     double last_vio_x_ = 0.0, last_vio_y_ = 0.0, last_vio_yaw_deg_ = 0.0;
     int64_t last_vio_ts_ns_ = 0;
+
+    // Pre-takeoff yaw-lock ring buffers (see config.pf.yaw_lock_*)
+    std::deque<double> yaw_lock_vio_buf_;
+    std::deque<double> yaw_lock_rtk_buf_;
+    bool yaw_locked_pretakeoff_ = false;
+    double locked_enu_yaw_compass_deg_ = 0.0;  // stored for seeding particles at init
 
     // Stats
     struct FineStats {

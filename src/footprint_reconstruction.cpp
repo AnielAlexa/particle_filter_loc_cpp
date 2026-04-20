@@ -151,8 +151,18 @@ std::optional<FootprintReconstruction> SatelliteFootprintReconstructor::reconstr
     dst_pts[2] = {static_cast<float>(output_size.width - 1), static_cast<float>(output_size.height - 1)};
     dst_pts[3] = {0, static_cast<float>(output_size.height - 1)};
 
+    // Validate src_pts to avoid degenerate perspective transforms that crash warpPerspective
+    for (int i = 0; i < 4; ++i) {
+        if (!std::isfinite(src_pts[i].x) || !std::isfinite(src_pts[i].y))
+            return std::nullopt;
+    }
+
     cv::Mat M = cv::getPerspectiveTransform(src_pts, dst_pts);
     cv::Mat M_inv = cv::getPerspectiveTransform(dst_pts, src_pts);
+
+    // Validate M (getPerspectiveTransform can return NaN on near-degenerate input)
+    if (!cv::checkRange(M) || !cv::checkRange(M_inv))
+        return std::nullopt;
 
     cv::Mat warped;
     cv::warpPerspective(mosaic, warped, M, output_size);

@@ -10,7 +10,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 
-MODEL_DIR = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
+MODEL_DIR = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/model"
 
 # Load database
 db = np.load(os.path.join(MODEL_DIR, "data/descriptors_vlad_l10_aerial/vlad_descriptors_pca768.npy")).astype(np.float32)

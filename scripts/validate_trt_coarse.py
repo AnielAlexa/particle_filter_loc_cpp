@@ -8,7 +8,7 @@ import cv2
 import sys
 import os
 
-MODEL_DIR = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
+MODEL_DIR = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/model"
 
 # Load database
 db_path = os.path.join(MODEL_DIR, "data/descriptors_vlad_l10_aerial/vlad_descriptors_pca768.npy")

@@ -10,10 +10,10 @@ A GPU-accelerated particle filter for drone visual geo-localization on Jetson Or
 
 ```bash
 # Build
-cd ~/ros2_ws && colcon build --packages-select particle_filter_loc_cpp --event-handlers console_direct+
+cd ~/particle_filter_ws && colcon build --packages-select particle_filter_loc_cpp --event-handlers console_direct+
 
 # Source
-source ~/ros2_ws/install/setup.bash
+source ~/particle_filter_ws/install/setup.bash
 
 # Run (with config)
 ros2 launch particle_filter_loc_cpp pf_geo_loc_cpp.launch.py config_path:=/path/to/pf_config.yaml

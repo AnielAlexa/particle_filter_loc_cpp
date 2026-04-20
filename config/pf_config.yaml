@@ -24,11 +24,11 @@ particle_filter:
   sigma_obs_fine: 3.0            # base observation sigma — tightened for strong VIO fine matches
   top_k_coarse: 5
   ess_threshold_fraction: 0.5
-  init_altitude_m: 25.0          # match altitude_min_process_m; RTK-init doesn't need VPR
+  init_altitude_m: 5.0           # seed PF early; camera processing still gated by matcher.altitude_min_process_m
   converge_spread_m: 40.0        # enter CONVERGING earlier
   tracking_spread_m: 20.0        # enter TRACKING earlier
   lost_spread_m: 80.0            # trigger LOST recovery earlier (was 150; filter got stuck at spread 50)
-  fine_every_n_frames: 2          # more frequent corrections
+  fine_every_n_frames: 1          # more frequent corrections
   fine_early_exit_inliers: 15    # jetson: cascade — stop fine matching once inliers >= this
   fine_min_inliers_heading: 12
   # Adaptive search (driven by particle spread)
@@ -155,7 +155,7 @@ trust:
   global_corr_teleport_sigma: 10.0         # spread of teleported particles (m)
 
 matchers:
-  script_dir: "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
+  script_dir: "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/model"
   # ── Coarse matcher switch ─────────────────────────────────────────────
   # coarse is loaded for LOST recovery only; Stage C fallback is hard-disabled in pf_node.cpp
   coarse_enabled: true
@@ -176,8 +176,8 @@ matchers:
   boq_database_path: "data/descriptors_boq/boq_descriptors.pt"
   patch_names_path: "data/descriptors_boq/patch_names.txt"
   # ─────────────────────────────────────────────────────────────────────
-  ransac_max_iters: 1000          # jetson: cap findHomography iterations (cv2 default=2000)
-  fine_engine_path: "LiteSAM/litesam_full_320x320_orin_fp16.engine"
+  ransac_max_iters: 2000          # jetson: cap findHomography iterations (cv2 default=2000)
+  fine_engine_path: "LiteSAM/litesam_full_320x320_agx_fp16.engine"
   use_pytorch_matcher: false         # true = PyTorch FP32, false = TRT
   fine_ckpt_path: "MatchAnything/matchanything_eloftr.ckpt"
   gps_metadata_path: "data/patches/gps_metadata.json"
@@ -208,7 +208,7 @@ replay:
   rtk_topic: "/m300/rtk/fix"
   yaw_topic: "/m300/rtk/yaw"
   altimeter_topic: "/altimeter/range"
-  vio_pose_topic: "/ov_srvins/vio/pose"
+  vio_pose_topic: "/ov_srvins/poseimu"
   start_offset_s: 50.0        # skip this many seconds from bag start
   camera_subsample: 3           # tuned: best avg across noise levels (~7Hz at 20Hz camera)
   altitude_min_process_m: 25.0  # skip camera frames if median altitude below this

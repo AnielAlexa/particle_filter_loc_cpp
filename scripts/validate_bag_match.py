@@ -8,7 +8,7 @@ import tensorrt as trt
 from rosbags.rosbag2 import Reader
 from rosbags.serde import deserialize_cdr
 
-MODEL_DIR = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
+MODEL_DIR = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/model"
 BAG_PATH = "/home/jetson/bags_remote/Day2.1/Day2.1_0.mcap"
 
 # Load database

@@ -6,7 +6,7 @@ import os
 import torch
 import tensorrt as trt
 
-MODEL_DIR = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
+MODEL_DIR = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/model"
 engine_path = os.path.join(MODEL_DIR, "dinov3_vlad_pca768_l10_value_256.engine")
 
 # Load engine

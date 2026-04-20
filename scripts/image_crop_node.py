@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin python3
 """ROS2 node: center-crop mono8 image to square, resize to target size.
 
 Subscribes to raw camera images (e.g. 1280x720 mono8), center-crops to the

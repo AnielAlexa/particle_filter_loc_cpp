@@ -1,10 +1,15 @@
 cmake_minimum_required(VERSION 3.22)
+
+# Inject FindOpenCV.cmake before any find_package(OpenCV) — including cv_bridge's transitive call.
+# The system /usr/lib/cmake/opencv4 references libopencv_core.so.4.8.0 which does not exist.
+get_filename_component(_WS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+list(INSERT CMAKE_MODULE_PATH 0 "${_WS_ROOT}/cmake/modules")
+
 project(particle_filter_loc_cpp LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Ensure /usr/local/lib OpenCV 4.12 is found before system 4.5d at runtime
 set(CMAKE_INSTALL_RPATH "/usr/local/lib")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
 
@@ -17,8 +22,6 @@ find_package(geometry_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 
 # ─── System dependencies ────────────────────────────────────────
-# Force /usr/local OpenCV 4.12 to avoid ABI conflict with system 4.5d
-set(OpenCV_DIR "/usr/local/lib/cmake/opencv4")
 find_package(OpenCV REQUIRED)
 find_package(Eigen3 3.4 REQUIRED)
 find_package(yaml-cpp REQUIRED)

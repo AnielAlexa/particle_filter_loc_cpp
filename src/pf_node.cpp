@@ -70,7 +70,7 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
 }
 
 void PFGeoLocNode::init_diag_csv() {
-    std::string path = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/results/pf_diag.csv";
+    std::string path = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/results/pf_diag.csv";
     diag_csv_.open(path, std::ios::trunc);
     if (diag_csv_.is_open()) {
         diag_csv_ << "timestamp,frame,phase,est_e,est_n,est_h,"
@@ -152,7 +152,7 @@ void PFGeoLocNode::print_stats() {
         s.skip_coarse);
 
     // Append to stats CSV
-    std::string stats_path = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/results/pf_stats.csv";
+    std::string stats_path = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/results/pf_stats.csv";
     bool file_exists = std::ifstream(stats_path).good();
     std::ofstream f(stats_path, std::ios::app);
     if (f.is_open()) {
@@ -190,6 +190,70 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
     }
 }
 
+void PFGeoLocNode::try_lock_yaw() {
+    if (yaw_locked_pretakeoff_ || initialized_) return;
+    if (!has_vio_ || !last_rtk_yaw_deg_.has_value()) return;
+    if (cfg_.pf.init_yaw != 0.0) return;  // fixed-config yaw: no need to lock from RTK
+
+    // Require ground-level altitude to avoid locking mid-climb
+    if (!altitude_buf_.empty()) {
+        std::vector<float> sorted(altitude_buf_.begin(), altitude_buf_.end());
+        std::sort(sorted.begin(), sorted.end());
+        float median_alt = sorted[sorted.size() / 2];
+        if (median_alt > cfg_.pf.yaw_lock_max_altitude_m) return;
+    }
+
+    // Skip zero-ish samples (VIO can emit identity on first frames)
+    if (std::abs(last_vio_yaw_deg_) < 1e-6 && std::abs(last_vio_x_) < 1e-9
+        && std::abs(last_vio_y_) < 1e-9) return;
+
+    yaw_lock_vio_buf_.push_back(last_vio_yaw_deg_);
+    yaw_lock_rtk_buf_.push_back(*last_rtk_yaw_deg_);
+    size_t cap = static_cast<size_t>(cfg_.pf.yaw_lock_buffer_size);
+    while (yaw_lock_vio_buf_.size() > cap) yaw_lock_vio_buf_.pop_front();
+    while (yaw_lock_rtk_buf_.size() > cap) yaw_lock_rtk_buf_.pop_front();
+    if (yaw_lock_vio_buf_.size() < cap) return;
+
+    // Circular stats on each buffer (handles wrap at 0/360)
+    auto circ_stats = [](const std::deque<double>& buf, double& mean_deg, double& stddev_deg) {
+        double sx = 0.0, sy = 0.0;
+        for (double v : buf) {
+            double r = v * M_PI / 180.0;
+            sx += std::cos(r);
+            sy += std::sin(r);
+        }
+        double n = static_cast<double>(buf.size());
+        double R = std::sqrt(sx * sx + sy * sy) / n;
+        double m = std::atan2(sy, sx) * 180.0 / M_PI;
+        if (m < 0.0) m += 360.0;
+        mean_deg = m;
+        // R clamped to avoid log(0); stddev via circular formula
+        double R_clamped = std::min(std::max(R, 1e-9), 1.0);
+        stddev_deg = std::sqrt(-2.0 * std::log(R_clamped)) * 180.0 / M_PI;
+    };
+
+    double vio_mean, vio_std, rtk_mean, rtk_std;
+    circ_stats(yaw_lock_vio_buf_, vio_mean, vio_std);
+    circ_stats(yaw_lock_rtk_buf_, rtk_mean, rtk_std);
+
+    if (vio_std > cfg_.pf.yaw_lock_max_stddev_deg ||
+        rtk_std > cfg_.pf.yaw_lock_max_stddev_deg) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Yaw lock waiting: vio_std=%.2f rtk_std=%.2f (thr=%.2f)",
+            vio_std, rtk_std, cfg_.pf.yaw_lock_max_stddev_deg);
+        return;
+    }
+
+    double vio_yaw_adj = wrap360(vio_mean + cfg_.pf.vio_yaw_offset_deg);
+    vio_motion_.lock_yaw(vio_yaw_adj, rtk_mean);
+    locked_enu_yaw_compass_deg_ = rtk_mean;
+    yaw_locked_pretakeoff_ = true;
+    RCLCPP_INFO(get_logger(),
+        "YAW LOCKED pre-takeoff: vio_mean=%.2f (std=%.2f) rtk_mean=%.2f (std=%.2f) "
+        "-> align_theta=%.2f",
+        vio_mean, vio_std, rtk_mean, rtk_std, vio_motion_.align_theta_deg());
+}
+
 void PFGeoLocNode::try_initialize(float median_alt) {
     if (initialized_) return;
     if (!pf_->try_init(median_alt)) return;
@@ -204,6 +268,9 @@ void PFGeoLocNode::try_initialize(float median_alt) {
     if (cfg_.pf.init_yaw != 0.0) {
         enu_yaw_deg = cfg_.pf.init_yaw;
         yaw_source = "config";
+    } else if (yaw_locked_pretakeoff_) {
+        enu_yaw_deg = locked_enu_yaw_compass_deg_;
+        yaw_source = "pre-locked";
     } else if (last_rtk_yaw_deg_.has_value()) {
         enu_yaw_deg = *last_rtk_yaw_deg_;
         yaw_source = "RTK";
@@ -234,7 +301,12 @@ void PFGeoLocNode::try_initialize(float median_alt) {
         cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
 
     double vio_yaw_adj = wrap360(last_vio_yaw_deg_ + cfg_.pf.vio_yaw_offset_deg);
-    vio_motion_.align(last_vio_x_, last_vio_y_, vio_yaw_adj, enu_yaw_deg);
+    if (vio_motion_.is_yaw_locked()) {
+        // Rotation was captured on the ground; only pin the VIO origin here
+        vio_motion_.pin_position(last_vio_x_, last_vio_y_);
+    } else {
+        vio_motion_.align(last_vio_x_, last_vio_y_, vio_yaw_adj, enu_yaw_deg);
+    }
 
     // Cache VIO→ENU mapping for dead-reckoned publication
     vio_ref_x_ = last_vio_x_;
@@ -278,6 +350,8 @@ void PFGeoLocNode::vio_pose_callback(
     last_vio_yaw_deg_ = yaw_deg;
     last_vio_ts_ns_ = ts_ns;
     has_vio_ = true;
+
+    try_lock_yaw();
 
     if (initialized_ && vio_motion_.is_aligned() && pf_->phase() != Phase::UNINIT) {
         double yaw_adj = wrap360(yaw_deg + cfg_.pf.vio_yaw_offset_deg);
@@ -419,22 +493,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             }
         }
 
-        // Debug: show images
-        {
-            int res = cfg_.matchers.matcher_resolution;
-            cv::Mat mono_wrap(height, width, CV_8UC1, const_cast<uint8_t*>(mono_data));
-            cv::Mat uav_show;
-            cv::resize(mono_wrap, uav_show, cv::Size(res, res));
-            cv::imshow("UAV", uav_show);
-            if (fp_recon.has_value() && !fp_recon->satellite_crop.empty())
-                cv::imshow("Satellite", fp_recon->satellite_crop);
-            if (fp_recon.has_value() && !fp_recon->mosaic_rotated.empty()) {
-                cv::Mat mosaic_show;
-                cv::resize(fp_recon->mosaic_rotated, mosaic_show, cv::Size(res, res));
-                cv::imshow("Mosaic", mosaic_show);
-            }
-            cv::waitKey(1);
-        }
+        // Debug visualization disabled (cv::imshow/resize segfault with OpenCV 4.5d on this device)
 
         // Stage A: Satellite perspective-warped (PnP only, no homography)
         if (fp_recon.has_value() && !fp_recon->satellite_crop.empty() && !fp_recon->warp_M_inv.empty()) {
