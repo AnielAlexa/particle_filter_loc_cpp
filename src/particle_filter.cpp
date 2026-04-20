@@ -644,4 +644,13 @@ double ParticleFilter::get_search_radius() const {
     return std::max(spread * cfg_.search_radius_multiplier, cfg_.min_search_radius_m);
 }
 
+double ParticleFilter::get_satellite_context_scale(double min_scale, double max_scale) const {
+    double spread = weighted_spread();
+    double lo = cfg_.sat_ctx_spread_low_m;
+    double hi = cfg_.sat_ctx_spread_high_m;
+    double t = (hi > lo) ? (spread - lo) / (hi - lo) : 0.0;
+    t = std::clamp(t, 0.0, 1.0);
+    return min_scale + t * (max_scale - min_scale);
+}
+
 }  // namespace pf

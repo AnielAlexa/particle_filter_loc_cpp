@@ -29,6 +29,8 @@ struct PFConfig {
     double search_radius_multiplier = 2.5;
     double base_context_fraction = 0.2;
     double max_context_fraction = 1.0;
+    double sat_ctx_spread_low_m = 0.0;     // spread for satellite_context_scale_min
+    double sat_ctx_spread_high_m = 20.0;   // spread at which satellite_context_scale_max is reached
     bool altitude_sigma_enabled = false;
     double altitude_sigma_ref_m = 60.0;
     double altitude_sigma_scale = 0.5;
@@ -167,7 +169,8 @@ struct MatcherConfig {
     int ransac_max_iters = 1000;
     int patch_cache_size = 100;
     double mosaic_context_scale = 1.5;      // mosaic crop = footprint_diagonal * this
-    double satellite_context_scale = 1.1;  // satellite crop expansion factor
+    double satellite_context_scale_min = 1.0;   // tight: used for refinement + low spread
+    double satellite_context_scale_max = 1.4;   // wide: reached at sat_ctx_spread_high_m
 };
 
 struct InitConfig {

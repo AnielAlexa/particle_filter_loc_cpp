@@ -59,6 +59,8 @@ FullConfig load_config(const std::string& yaml_path) {
         pf.search_radius_multiplier = get(p, "search_radius_multiplier", pf.search_radius_multiplier);
         pf.base_context_fraction = get(p, "base_context_fraction", pf.base_context_fraction);
         pf.max_context_fraction = get(p, "max_context_fraction", pf.max_context_fraction);
+        pf.sat_ctx_spread_low_m = get(p, "sat_ctx_spread_low_m", pf.sat_ctx_spread_low_m);
+        pf.sat_ctx_spread_high_m = get(p, "sat_ctx_spread_high_m", pf.sat_ctx_spread_high_m);
         pf.altitude_sigma_enabled = get(p, "altitude_sigma_enabled", pf.altitude_sigma_enabled);
         pf.altitude_sigma_ref_m = get(p, "altitude_sigma_ref_m", pf.altitude_sigma_ref_m);
         pf.altitude_sigma_scale = get(p, "altitude_sigma_scale", pf.altitude_sigma_scale);
@@ -184,7 +186,8 @@ FullConfig load_config(const std::string& yaml_path) {
         mc.ransac_max_iters = get(m, "ransac_max_iters", mc.ransac_max_iters);
         mc.patch_cache_size = get(m, "patch_cache_size", mc.patch_cache_size);
         mc.mosaic_context_scale = get(m, "mosaic_context_scale", mc.mosaic_context_scale);
-        mc.satellite_context_scale = get(m, "satellite_context_scale", mc.satellite_context_scale);
+        mc.satellite_context_scale_min = get(m, "satellite_context_scale_min", mc.satellite_context_scale_min);
+        mc.satellite_context_scale_max = get(m, "satellite_context_scale_max", mc.satellite_context_scale_max);
     }
 
     // Init

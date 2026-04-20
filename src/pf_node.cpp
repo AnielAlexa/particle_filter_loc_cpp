@@ -477,7 +477,10 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         auto [rlat, rlon] = enu_.enu_to_wgs84(est_e, est_n);
         double heading_for_recon = est_h + cfg_.camera.heading_offset_deg;
 
-        // Build footprint reconstruction
+        // Build footprint reconstruction (adaptive context scale from particle spread)
+        double adaptive_sat_ctx = pf.get_satellite_context_scale(
+            cfg_.matchers.satellite_context_scale_min,
+            cfg_.matchers.satellite_context_scale_max);
         std::optional<FootprintReconstruction> fp_recon;
         if (obs.altitude_m > 20.0) {
             try {
@@ -487,7 +490,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                     cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
                     cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
                     cfg_.matchers.mosaic_context_scale,
-                    cfg_.matchers.satellite_context_scale);
+                    adaptive_sat_ctx);
             } catch (const std::exception& e) {
                 RCLCPP_WARN(get_logger(), "Recon exception: %s", e.what());
             }
@@ -503,6 +506,43 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 fp_recon->satellite_crop,
                 fp_recon->mosaic_meta,
                 fp_recon->warp_M_inv);
+
+            // Refinement: if primary used wide context and produced a hit, re-match
+            // at context_min centered on the candidate for an accurate position.
+            // Normal match — no extra gates; downstream pipeline continues to judge it.
+            const double ctx_min = cfg_.matchers.satellite_context_scale_min;
+            if (sat_fine.has_value() && adaptive_sat_ctx > ctx_min + 0.05) {
+                double refine_heading = sat_fine->heading_deg.value_or(est_h)
+                                        + cfg_.camera.heading_offset_deg;
+                try {
+                    auto refine_recon = obs.footprint().reconstruct(
+                        sat_fine->lat, sat_fine->lon, obs.altitude_m, refine_heading,
+                        cfg_.matchers.camera_fx, cfg_.matchers.camera_fy,
+                        cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
+                        cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
+                        cfg_.matchers.mosaic_context_scale,
+                        ctx_min);
+                    if (refine_recon.has_value()
+                        && !refine_recon->satellite_crop.empty()
+                        && !refine_recon->warp_M_inv.empty()) {
+                        auto refined = obs.fine_match_on_satellite(
+                            mono_data, width, height,
+                            refine_recon->satellite_crop,
+                            refine_recon->mosaic_meta,
+                            refine_recon->warp_M_inv);
+                        if (refined.has_value()) {
+                            RCLCPP_INFO(get_logger(),
+                                "F%d sat refine ctx %.2f->%.2f inl %d->%d",
+                                frame_count_, adaptive_sat_ctx, ctx_min,
+                                sat_fine->inliers, refined->inliers);
+                            sat_fine = refined;
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    RCLCPP_WARN(get_logger(), "sat refine exception: %s", e.what());
+                }
+            }
+
             if (sat_fine.has_value()) {
                 stats_.satellite_ok++;
                 stats_.total_sat_inliers += sat_fine->inliers;
@@ -666,7 +706,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                         cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
                         cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
                         cfg_.matchers.mosaic_context_scale,
-                        cfg_.matchers.satellite_context_scale);
+                        cfg_.matchers.satellite_context_scale_min);
 
                     if (verify_recon_opt.has_value() &&
                         !verify_recon_opt->satellite_crop.empty() &&

@@ -28,7 +28,7 @@ particle_filter:
   converge_spread_m: 40.0        # enter CONVERGING earlier
   tracking_spread_m: 20.0        # enter TRACKING earlier
   lost_spread_m: 80.0            # trigger LOST recovery earlier (was 150; filter got stuck at spread 50)
-  fine_every_n_frames: 1          # more frequent corrections
+  fine_every_n_frames: 2          # more frequent corrections
   fine_early_exit_inliers: 15    # jetson: cascade — stop fine matching once inliers >= this
   fine_min_inliers_heading: 12
   # Adaptive search (driven by particle spread)
@@ -36,6 +36,8 @@ particle_filter:
   search_radius_multiplier: 2.5
   base_context_fraction: 0.2
   max_context_fraction: 1.0
+  sat_ctx_spread_low_m: 0.0     # spread for satellite_context_scale_min
+  sat_ctx_spread_high_m: 20.0   # spread at which satellite_context_scale_max is reached
   # Altitude-adaptive coarse sigma
   altitude_sigma_enabled: false
   altitude_sigma_ref_m: 60.0
@@ -95,7 +97,7 @@ particle_filter:
   vote_enabled: true
   vote_window_size: 6
   vote_min_agree: 3
-  vote_agreement_m: 11.0
+  vote_agreement_m: 10.0
   vote_max_age_frames: 15
   # Note: fine_consistency_max_m gate is now a no-op while vote_enabled=true.
 
@@ -176,7 +178,7 @@ matchers:
   boq_database_path: "data/descriptors_boq/boq_descriptors.pt"
   patch_names_path: "data/descriptors_boq/patch_names.txt"
   # ─────────────────────────────────────────────────────────────────────
-  ransac_max_iters: 2000          # jetson: cap findHomography iterations (cv2 default=2000)
+  ransac_max_iters: 1000          # jetson: cap findHomography iterations (cv2 default=2000)
   fine_engine_path: "LiteSAM/litesam_full_320x320_agx_fp16.engine"
   use_pytorch_matcher: false         # true = PyTorch FP32, false = TRT
   fine_ckpt_path: "MatchAnything/matchanything_eloftr.ckpt"
@@ -196,7 +198,8 @@ matchers:
   min_inliers: 8
   min_inliers_homography: 8
   mosaic_context_scale: 1.3       # mosaic crop = footprint_diagonal * this
-  satellite_context_scale: 1.2   # satellite crop expansion (more context for matching)
+  satellite_context_scale_min: 1.0   # tight context (refinement pass + low spread)
+  satellite_context_scale_max: 1.3   # wide context (reached at pf.sat_ctx_spread_high_m)
 
 init:
   lock_n_frames: 4          # consecutive top-1 hits before seeding

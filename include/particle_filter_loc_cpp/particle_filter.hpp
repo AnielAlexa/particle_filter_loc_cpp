@@ -64,6 +64,7 @@ public:
     int get_fine_top_k() const;
     double get_context_fraction(double base = 0.25) const;
     double get_search_radius() const;
+    double get_satellite_context_scale(double min_scale, double max_scale) const;
 
     // State
     Phase phase() const { return phase_; }
