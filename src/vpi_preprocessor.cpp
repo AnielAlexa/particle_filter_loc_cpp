@@ -11,8 +11,8 @@ namespace pf {
 static constexpr float kMean[3] = {0.485f, 0.456f, 0.406f};
 static constexpr float kStd[3]  = {0.229f, 0.224f, 0.225f};
 
-VpiPreprocessor::VpiPreprocessor(int coarse_size, int fine_size)
-    : coarse_size_(coarse_size), fine_size_(fine_size) {}
+VpiPreprocessor::VpiPreprocessor(int coarse_size, int fine_w, int fine_h)
+    : coarse_size_(coarse_size), fine_w_(fine_w), fine_h_(fine_h) {}
 
 void VpiPreprocessor::resize_mono8_cpu(
     const uint8_t* src, int sw, int sh,
@@ -59,15 +59,16 @@ void VpiPreprocessor::prepare_coarse(
 void VpiPreprocessor::prepare_fine(
     const uint8_t* mono_data, int width, int height, float* output_ptr)
 {
-    int fs = fine_size_;
-    int total = fs * fs;
+    int fw = fine_w_;
+    int fh = fine_h_;
+    int total = fw * fh;
 
-    if (width == fs && height == fs) {
+    if (width == fw && height == fh) {
         for (int i = 0; i < total; ++i)
             output_ptr[i] = static_cast<float>(mono_data[i]) / 255.0f;
     } else {
         std::vector<uint8_t> resized(total);
-        resize_mono8_cpu(mono_data, width, height, resized.data(), fs, fs);
+        resize_mono8_cpu(mono_data, width, height, resized.data(), fw, fh);
         for (int i = 0; i < total; ++i)
             output_ptr[i] = static_cast<float>(resized[i]) / 255.0f;
     }
@@ -76,8 +77,9 @@ void VpiPreprocessor::prepare_fine(
 void VpiPreprocessor::prepare_fine_patch(
     const uint8_t* bgr_data, int width, int height, float* output_ptr)
 {
-    int fs = fine_size_;
-    int total = fs * fs;
+    int fw = fine_w_;
+    int fh = fine_h_;
+    int total = fw * fh;
 
     // BGR -> grayscale
     std::vector<uint8_t> gray(width * height);
@@ -89,10 +91,10 @@ void VpiPreprocessor::prepare_fine_patch(
     }
 
     std::vector<uint8_t> resized(total);
-    if (width == fs && height == fs)
+    if (width == fw && height == fh)
         resized = gray;
     else
-        resize_mono8_cpu(gray.data(), width, height, resized.data(), fs, fs);
+        resize_mono8_cpu(gray.data(), width, height, resized.data(), fw, fh);
 
     for (int i = 0; i < total; ++i)
         output_ptr[i] = static_cast<float>(resized[i]) / 255.0f;

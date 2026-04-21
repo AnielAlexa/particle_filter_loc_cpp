@@ -157,7 +157,7 @@ trust:
   global_corr_teleport_sigma: 10.0         # spread of teleported particles (m)
 
 matchers:
-  script_dir: "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/model"
+  script_dir: "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
   # ── Coarse matcher switch ─────────────────────────────────────────────
   # coarse is loaded for LOST recovery only; Stage C fallback is hard-disabled in pf_node.cpp
   coarse_enabled: true
@@ -179,18 +179,22 @@ matchers:
   patch_names_path: "data/descriptors_boq/patch_names.txt"
   # ─────────────────────────────────────────────────────────────────────
   ransac_max_iters: 1000          # jetson: cap findHomography iterations (cv2 default=2000)
-  fine_engine_path: "LiteSAM/litesam_full_320x320_agx_fp16.engine"
+  fine_engine_path: "LiteSAM/litesam_full_288x512.engine"
   use_pytorch_matcher: false         # true = PyTorch FP32, false = TRT
   fine_ckpt_path: "MatchAnything/matchanything_eloftr.ckpt"
   gps_metadata_path: "data/patches/gps_metadata.json"
   patches_dir: "data/patches"
   image_size: 256
   grayscale: true
-  matcher_resolution: 320
-  camera_fx: 501.8
-  camera_fy: 502.1
-  camera_cx: 151.1
-  camera_cy: 221.9
+  matcher_width: 512
+  matcher_height: 288
+  # Intrinsics rescaled from sky-sqrtVINS kalibr_imucam_chain.yaml (1280x720,
+  # fx=1129.0183, fy=1129.8245, cx=620.0480, cy=499.3094) by factor 0.4 for
+  # the direct resize path (no crop).
+  camera_fx: 451.6073
+  camera_fy: 451.9298
+  camera_cx: 248.0192
+  camera_cy: 199.7238
   context_enabled: true
   context_fraction: 0.2
   fine_conf_threshold: 0.17

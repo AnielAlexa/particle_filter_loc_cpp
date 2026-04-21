@@ -487,8 +487,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 fp_recon = obs.footprint().reconstruct(
                     rlat, rlon, obs.altitude_m, heading_for_recon,
                     cfg_.matchers.camera_fx, cfg_.matchers.camera_fy,
-                    cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
-                    cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
+                    cfg_.matchers.matcher_width, cfg_.matchers.matcher_height,
+                    cv::Size(cfg_.matchers.matcher_width, cfg_.matchers.matcher_height),
                     cfg_.matchers.mosaic_context_scale,
                     adaptive_sat_ctx);
             } catch (const std::exception& e) {
@@ -518,8 +518,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                     auto refine_recon = obs.footprint().reconstruct(
                         sat_fine->lat, sat_fine->lon, obs.altitude_m, refine_heading,
                         cfg_.matchers.camera_fx, cfg_.matchers.camera_fy,
-                        cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
-                        cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
+                        cfg_.matchers.matcher_width, cfg_.matchers.matcher_height,
+                        cv::Size(cfg_.matchers.matcher_width, cfg_.matchers.matcher_height),
                         cfg_.matchers.mosaic_context_scale,
                         ctx_min);
                     if (refine_recon.has_value()
@@ -703,8 +703,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                     auto verify_recon_opt = obs.footprint().reconstruct(
                         primary_fine->lat, primary_fine->lon, obs.altitude_m, verify_heading,
                         cfg_.matchers.camera_fx, cfg_.matchers.camera_fy,
-                        cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution,
-                        cv::Size(cfg_.matchers.matcher_resolution, cfg_.matchers.matcher_resolution),
+                        cfg_.matchers.matcher_width, cfg_.matchers.matcher_height,
+                        cv::Size(cfg_.matchers.matcher_width, cfg_.matchers.matcher_height),
                         cfg_.matchers.mosaic_context_scale,
                         cfg_.matchers.satellite_context_scale_min);
 

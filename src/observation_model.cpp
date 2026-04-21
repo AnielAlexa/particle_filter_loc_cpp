@@ -59,7 +59,7 @@ ObservationModel::ObservationModel(const MatcherConfig& cfg, const ENUFrame& enu
     patches_dir_ = script_dir_ + "/" + cfg.patches_dir;
 
     // Initialize VPI preprocessor
-    vpi_ = std::make_unique<VpiPreprocessor>(cfg.image_size, cfg.matcher_resolution);
+    vpi_ = std::make_unique<VpiPreprocessor>(cfg.image_size, cfg.matcher_width, cfg.matcher_height);
 
     // Database path
     std::string db_npy_path, names_path;
@@ -94,7 +94,7 @@ ObservationModel::ObservationModel(const MatcherConfig& cfg, const ENUFrame& enu
 
     // Load fine matcher
     std::string fine_engine = script_dir_ + "/" + cfg.fine_engine_path;
-    fine_ = std::make_unique<FineMatcher>(fine_engine, *vpi_, cfg.matcher_resolution, cfg.fine_conf_threshold);
+    fine_ = std::make_unique<FineMatcher>(fine_engine, *vpi_, cfg.matcher_width, cfg.matcher_height, cfg.fine_conf_threshold);
 
     // Pose estimator
     pose_ = std::make_unique<PoseEstimator>(
@@ -146,7 +146,8 @@ std::optional<FineResult> ObservationModel::fine_match(
     const std::string& patch_name, double context_fraction)
 {
     pose_->set_altitude(altitude_m);
-    int res = cfg_.matcher_resolution;
+    int res_w = cfg_.matcher_width;
+    int res_h = cfg_.matcher_height;
 
     // Build context patch
     cv::Mat patch_bgr;
@@ -234,8 +235,8 @@ std::optional<FineResult> ObservationModel::fine_match(
 
     // Scale patch keypoints to composite pixel space
     Eigen::MatrixXf mkpts1_patch = match_out.keypoints1;
-    mkpts1_patch.col(0) *= static_cast<float>(flat_meta.patch_w) / res;
-    mkpts1_patch.col(1) *= static_cast<float>(flat_meta.patch_h) / res;
+    mkpts1_patch.col(0) *= static_cast<float>(flat_meta.patch_w) / res_w;
+    mkpts1_patch.col(1) *= static_cast<float>(flat_meta.patch_h) / res_h;
 
     // PnP
     auto pnp_result = pose_->solve_pnp(match_out.keypoints0, mkpts1_patch, flat_meta);
@@ -260,7 +261,8 @@ std::optional<FineResult> ObservationModel::fine_match_on_satellite(
     const cv::Mat& warp_M_inv)
 {
     pose_->set_altitude(altitude_m);
-    int res = cfg_.matcher_resolution;
+    int res_w = cfg_.matcher_width;
+    int res_h = cfg_.matcher_height;
     int sh = satellite_crop.rows, sw = satellite_crop.cols;
 
     auto match_out = fine_->match(mono_data, width, height,
@@ -271,8 +273,8 @@ std::optional<FineResult> ObservationModel::fine_match_on_satellite(
 
     // Scale keypoints from matcher res to satellite_crop pixel space
     Eigen::MatrixXf mkpts1_sat = match_out.keypoints1;
-    mkpts1_sat.col(0) *= static_cast<float>(sw) / res;
-    mkpts1_sat.col(1) *= static_cast<float>(sh) / res;
+    mkpts1_sat.col(0) *= static_cast<float>(sw) / res_w;
+    mkpts1_sat.col(1) *= static_cast<float>(sh) / res_h;
 
     // Un-warp: satellite_crop pixels → North-up mosaic pixels via perspective M_inv (3x3)
     int n = mkpts1_sat.rows();
@@ -310,7 +312,8 @@ std::optional<FineResult> ObservationModel::fine_match_on_mosaic(
     const cv::Mat& rot_crop_M_inv)
 {
     pose_->set_altitude(altitude_m);
-    int res = cfg_.matcher_resolution;
+    int res_w = cfg_.matcher_width;
+    int res_h = cfg_.matcher_height;
     int mh = mosaic_rotated.rows, mw = mosaic_rotated.cols;
 
     auto match_out = fine_->match(mono_data, width, height,
@@ -321,8 +324,8 @@ std::optional<FineResult> ObservationModel::fine_match_on_mosaic(
 
     // Scale to mosaic_rotated pixel space
     Eigen::MatrixXf mkpts1_rot = match_out.keypoints1;
-    mkpts1_rot.col(0) *= static_cast<float>(mw) / res;
-    mkpts1_rot.col(1) *= static_cast<float>(mh) / res;
+    mkpts1_rot.col(0) *= static_cast<float>(mw) / res_w;
+    mkpts1_rot.col(1) *= static_cast<float>(mh) / res_h;
 
     // Map back to North-up mosaic via inverse affine
     int n = mkpts1_rot.rows();

@@ -1,16 +1,10 @@
 #!/usr/bin python3
-"""ROS2 node: center-crop mono8 image to square, resize to target size.
+"""ROS2 node: resize mono8 image to the matcher's native input size.
 
-Subscribes to raw camera images (e.g. 1280x720 mono8), center-crops to the
-largest inscribed square (720x720), then resizes to output_size (default 320x320).
-Publishes the result on a separate topic for downstream nodes that expect
-square, pre-cropped input.
-
-Usage:
-    python3 image_crop_node.py
-    python3 image_crop_node.py --ros-args -p input_topic:=/camera/image_mono \
-                                          -p output_topic:=/camera/image_rect \
-                                          -p output_size:=320
+Subscribes to raw camera images (1280x720 mono8) and resizes directly to
+output_width x output_height (default 512x288, matching the LiteSAM
+288x512 engine). The source aspect ratio (16:9) matches the target, so no
+crop is needed — a plain resize preserves scale.
 """
 
 import rclpy
@@ -27,22 +21,22 @@ class ImageCropNode(Node):
 
         self.declare_parameter("input_topic", "/camera/image_mono")
         self.declare_parameter("output_topic", "/camera/image_rect")
-        self.declare_parameter("output_size", 320)
+        self.declare_parameter("output_width", 512)
+        self.declare_parameter("output_height", 288)
         self.declare_parameter("subsample", 2)
 
         input_topic = self.get_parameter("input_topic").value
         output_topic = self.get_parameter("output_topic").value
-        self.output_size = self.get_parameter("output_size").value
+        self.output_width = self.get_parameter("output_width").value
+        self.output_height = self.get_parameter("output_height").value
         self.subsample = self.get_parameter("subsample").value
         self.frame_count = 0
 
-        # Subscribe reliable (matches bag replay QoS)
         qos_sub = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
-        # Publish best_effort (matches PF node QoS)
         qos_pub = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -55,8 +49,8 @@ class ImageCropNode(Node):
         )
 
         self.get_logger().info(
-            f"Crop node: {input_topic} -> {output_topic} "
-            f"(crop to square, resize {self.output_size}x{self.output_size}, "
+            f"Resize node: {input_topic} -> {output_topic} "
+            f"({self.output_width}x{self.output_height}, "
             f"subsample={self.subsample})"
         )
 
@@ -68,7 +62,6 @@ class ImageCropNode(Node):
         h = msg.height
         w = msg.width
 
-        # Decode mono8 from flat buffer
         if msg.encoding == "mono8":
             img = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w)
         else:
@@ -77,29 +70,20 @@ class ImageCropNode(Node):
             )
             return
 
-        # Center-crop to largest inscribed square
-        s = min(h, w)
-        x0 = (w - s) // 2
-        y0 = (h - s) // 2
-        cropped = img[y0 : y0 + s, x0 : x0 + s]
-
-        # Resize to output_size x output_size
-        out_size = self.output_size
-        if s != out_size:
-            resized = cv2.resize(
-                cropped, (out_size, out_size), interpolation=cv2.INTER_LINEAR
-            )
+        out_w = self.output_width
+        out_h = self.output_height
+        if w != out_w or h != out_h:
+            resized = cv2.resize(img, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
         else:
-            resized = cropped
+            resized = img
 
-        # Build output message, preserving original timestamp
         out_msg = Image()
         out_msg.header = msg.header
-        out_msg.height = out_size
-        out_msg.width = out_size
+        out_msg.height = out_h
+        out_msg.width = out_w
         out_msg.encoding = "mono8"
         out_msg.is_bigendian = 0
-        out_msg.step = out_size
+        out_msg.step = out_w
         out_msg.data = resized.tobytes()
 
         self.pub.publish(out_msg)

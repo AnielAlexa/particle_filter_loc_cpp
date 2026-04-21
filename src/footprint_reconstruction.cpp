@@ -167,19 +167,23 @@ std::optional<FootprintReconstruction> SatelliteFootprintReconstructor::reconstr
     cv::Mat warped;
     cv::warpPerspective(mosaic, warped, M, output_size);
 
-    // Heading-aligned mosaic
+    // Heading-aligned mosaic. Crop size matches output_size aspect so the
+    // downstream matcher receives a rectangle with the drone's ground-footprint
+    // aspect (no non-uniform stretch in VpiPreprocessor::prepare_fine_patch).
     double gsd_lon = (meta.max_lon - meta.min_lon) / (m_w - 1) * 111320.0 * std::cos(lat_rad);
     double gsd_lat = (meta.max_lat - meta.min_lat) / (m_h - 1) * 111320.0;
     double gsd = (gsd_lon + gsd_lat) / 2.0;
-    int S = std::max(64, static_cast<int>(std::round(square_side / gsd)));
+    double aspect = static_cast<double>(output_size.height) / output_size.width;
+    int S_w = std::max(64, static_cast<int>(std::round(square_side / gsd)));
+    int S_h = std::max(64, static_cast<int>(std::round(S_w * aspect)));
 
     cv::Mat rot_mat = cv::getRotationMatrix2D(
         {static_cast<float>(center_px_x), static_cast<float>(center_px_y)}, heading_deg, 1.0);
-    rot_mat.at<double>(0, 2) += S / 2.0 - center_px_x;
-    rot_mat.at<double>(1, 2) += S / 2.0 - center_px_y;
+    rot_mat.at<double>(0, 2) += S_w / 2.0 - center_px_x;
+    rot_mat.at<double>(1, 2) += S_h / 2.0 - center_px_y;
 
     cv::Mat mosaic_rot;
-    cv::warpAffine(mosaic, mosaic_rot, rot_mat, {S, S});
+    cv::warpAffine(mosaic, mosaic_rot, rot_mat, {S_w, S_h});
 
     // Inverse affine
     cv::Mat M_fwd_3x3 = cv::Mat::zeros(3, 3, CV_64F);

@@ -155,7 +155,8 @@ struct MatcherConfig {
     std::string patches_dir;
     int image_size = 256;
     bool grayscale = true;
-    int matcher_resolution = 320;
+    int matcher_width = 512;
+    int matcher_height = 288;
     double camera_fx = 501.8;
     double camera_fy = 502.1;
     double camera_cx = 151.1;

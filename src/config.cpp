@@ -172,7 +172,8 @@ FullConfig load_config(const std::string& yaml_path) {
         mc.patches_dir = get<std::string>(m, "patches_dir", mc.patches_dir);
         mc.image_size = get(m, "image_size", mc.image_size);
         mc.grayscale = get(m, "grayscale", mc.grayscale);
-        mc.matcher_resolution = get(m, "matcher_resolution", mc.matcher_resolution);
+        mc.matcher_width = get(m, "matcher_width", mc.matcher_width);
+        mc.matcher_height = get(m, "matcher_height", mc.matcher_height);
         mc.camera_fx = get(m, "camera_fx", mc.camera_fx);
         mc.camera_fy = get(m, "camera_fy", mc.camera_fy);
         mc.camera_cx = get(m, "camera_cx", mc.camera_cx);

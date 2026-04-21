@@ -18,7 +18,8 @@ class FineMatcher {
 public:
     FineMatcher(const std::string& engine_path,
                 VpiPreprocessor& vpi,
-                int resolution = 320,
+                int width = 512,
+                int height = 288,
                 float conf_threshold = 0.2f);
 
     // Match drone mono image against a BGR patch image
@@ -28,7 +29,8 @@ public:
 private:
     TrtEngine engine_;
     VpiPreprocessor& vpi_;
-    int resolution_;
+    int width_;
+    int height_;
     float conf_threshold_;
     int img0_idx_, img1_idx_;
     int kpts0_idx_, kpts1_idx_, conf_idx_, valid_count_idx_;

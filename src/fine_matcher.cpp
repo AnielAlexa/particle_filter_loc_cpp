@@ -8,10 +8,11 @@ namespace pf {
 FineMatcher::FineMatcher(
     const std::string& engine_path,
     VpiPreprocessor& vpi,
-    int resolution,
+    int width,
+    int height,
     float conf_threshold)
     : engine_(engine_path), vpi_(vpi),
-      resolution_(resolution), conf_threshold_(conf_threshold)
+      width_(width), height_(height), conf_threshold_(conf_threshold)
 {
     // Discover tensor indices by name
     // LiteSAM Full: image0, image1 (inputs), mkpts0_f, mkpts1_f, mconf, valid_count (outputs)
@@ -51,7 +52,7 @@ FineMatcher::FineMatcher(
         }
     }
 
-    std::cout << "[FineMatcher] Engine loaded, resolution=" << resolution_
+    std::cout << "[FineMatcher] Engine loaded, input=" << width_ << "x" << height_
               << " conf_threshold=" << conf_threshold_ << std::endl;
 }
 

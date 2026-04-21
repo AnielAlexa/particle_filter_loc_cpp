@@ -15,9 +15,9 @@ import os
 import json
 import time
 
-MODEL_DIR = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/model"
-OUTPUT_PATH = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/results/pf_trajectory.png"
-CSV_PATH = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/results/pf_results.csv"
+MODEL_DIR = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
+OUTPUT_PATH = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/results/pf_trajectory.png"
+CSV_PATH = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/results/pf_results.csv"
 
 
 class PositionPlotter(Node):
