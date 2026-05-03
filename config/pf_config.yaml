@@ -97,7 +97,7 @@ particle_filter:
   vote_enabled: true
   vote_window_size: 6
   vote_min_agree: 3
-  vote_agreement_m: 10.0
+  vote_agreement_m: 15.0
   vote_max_age_frames: 15
   # Note: fine_consistency_max_m gate is now a no-op while vote_enabled=true.
 
@@ -160,7 +160,7 @@ matchers:
   script_dir: "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/model"
   # ── Coarse matcher switch ─────────────────────────────────────────────
   # coarse is loaded for LOST recovery only; Stage C fallback is hard-disabled in pf_node.cpp
-  coarse_enabled: true
+  coarse_enabled: false
   use_vlad: false
   # VLAD (timm DINOv3 + hard-assignment VLAD, no TRT required)
   vlad_codebook_path:    "data/descriptors_vlad_l10_aerial/vlad_codebook.pt"
@@ -211,7 +211,7 @@ init:
 
 replay:
   mcap_path: "/home/jetson/bags_remote/Day2.6/Day2.6_0.mcap"
-  camera_topic: "/camera/image_rect"
+  camera_topic: "/camera/image_pf"
   rtk_topic: "/m300/rtk/fix"
   yaw_topic: "/m300/rtk/yaw"
   altimeter_topic: "/altimeter/range"

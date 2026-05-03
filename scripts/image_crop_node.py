@@ -20,7 +20,7 @@ class ImageCropNode(Node):
         super().__init__("image_crop_node")
 
         self.declare_parameter("input_topic", "/camera/image_mono")
-        self.declare_parameter("output_topic", "/camera/image_rect")
+        self.declare_parameter("output_topic", "/camera/image_pf")
         self.declare_parameter("output_width", 512)
         self.declare_parameter("output_height", 288)
         self.declare_parameter("subsample", 2)

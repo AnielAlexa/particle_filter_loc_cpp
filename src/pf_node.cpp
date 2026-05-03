@@ -679,7 +679,7 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     pf.check_transitions();
 
     // ── LOST recovery: coarse(extended) → fine → double verify → re-inject ──
-    if (pf.phase() == Phase::LOST && should_fine && !fine_succeeded) {
+    if (pf.phase() == Phase::LOST && should_fine && !fine_succeeded && cfg_.matchers.coarse_enabled) {
         RCLCPP_WARN(get_logger(), "F%d LOST recovery: running extended coarse+fine", frame_count_);
 
         // Extended search: no radius filter (full DB)
