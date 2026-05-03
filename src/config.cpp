@@ -195,6 +195,11 @@ FullConfig load_config(const std::string& yaml_path) {
     if (auto i = root["init"]) {
         cfg.init.lock_n_frames = get(i, "lock_n_frames", cfg.init.lock_n_frames);
         cfg.init.lock_sim_threshold = get(i, "lock_sim_threshold", cfg.init.lock_sim_threshold);
+        cfg.init.qr_min_side_px = get(i, "qr_min_side_px", cfg.init.qr_min_side_px);
+        cfg.init.qr_max_aspect_skew = get(i, "qr_max_aspect_skew", cfg.init.qr_max_aspect_skew);
+        cfg.init.qr_stable_n = get(i, "qr_stable_n", cfg.init.qr_stable_n);
+        cfg.init.qr_yaw_max_stddev_deg = get(i, "qr_yaw_max_stddev_deg", cfg.init.qr_yaw_max_stddev_deg);
+        cfg.init.qr_pos_max_stddev_m = get(i, "qr_pos_max_stddev_m", cfg.init.qr_pos_max_stddev_m);
     }
 
     // Replay (topic names)

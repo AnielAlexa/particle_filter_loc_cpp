@@ -57,6 +57,7 @@ add_library(pf_core SHARED
   src/fine_matcher.cpp
   src/pose_estimator.cpp
   src/observation_model.cpp
+  src/qr_init_detector.cpp
 )
 
 target_include_directories(pf_core PUBLIC

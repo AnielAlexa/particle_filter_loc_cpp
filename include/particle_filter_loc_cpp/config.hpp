@@ -177,6 +177,14 @@ struct MatcherConfig {
 struct InitConfig {
     int lock_n_frames = 4;
     double lock_sim_threshold = 0.3;
+    // QR init (sky-lign): drone is placed ~20cm above an iPhone showing the
+    // sky-lign QR; payload is `geo:LAT,LON` with the canvas rotated so the
+    // QR's top points to true North.
+    double qr_min_side_px = 40.0;     // reject tiny detections
+    double qr_max_aspect_skew = 0.30; // reject heavily skewed quads
+    int qr_stable_n = 5;              // consecutive QR samples required before seeding
+    double qr_yaw_max_stddev_deg = 1.5;
+    double qr_pos_max_stddev_m = 0.05;
 };
 
 struct CameraConfig {

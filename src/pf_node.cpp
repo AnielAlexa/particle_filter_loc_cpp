@@ -28,6 +28,10 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
     pf_ = std::make_unique<ParticleFilter>(cfg_.pf);
     obs_ = std::make_unique<ObservationModel>(cfg_.matchers, enu_);
     trust_ = std::make_unique<TrustTracker>(cfg_.trust);
+    qr_init_ = std::make_unique<QrInitDetector>(
+        cfg_.camera.heading_offset_deg,
+        cfg_.init.qr_min_side_px,
+        cfg_.init.qr_max_aspect_skew);
     vio_motion_.set_jump_params(cfg_.pf.vio_jump_threshold_m, cfg_.pf.vio_jump_velocity_ema_alpha);
 
     // QoS
@@ -191,6 +195,11 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
 }
 
 void PFGeoLocNode::try_lock_yaw() {
+    // Pre-takeoff yaw lock against RTK is no longer used: with sky-lign QR
+    // init, the QR provides world-aligned yaw directly. Kept as a stub so
+    // existing callers compile; remove once vio_pose_callback is rewritten.
+    return;
+
     if (yaw_locked_pretakeoff_ || initialized_) return;
     if (!has_vio_ || !last_rtk_yaw_deg_.has_value()) return;
     if (cfg_.pf.init_yaw != 0.0) return;  // fixed-config yaw: no need to lock from RTK
@@ -254,61 +263,141 @@ void PFGeoLocNode::try_lock_yaw() {
         vio_mean, vio_std, rtk_mean, rtk_std, vio_motion_.align_theta_deg());
 }
 
+namespace {
+
+void circ_stats_deg(const std::deque<double>& buf, double& mean_deg, double& stddev_deg) {
+    double sx = 0.0, sy = 0.0;
+    for (double v : buf) {
+        double r = v * M_PI / 180.0;
+        sx += std::cos(r);
+        sy += std::sin(r);
+    }
+    double n = static_cast<double>(buf.size());
+    double R = std::sqrt(sx * sx + sy * sy) / n;
+    double m = std::atan2(sy, sx) * 180.0 / M_PI;
+    if (m < 0.0) m += 360.0;
+    mean_deg = m;
+    double R_clamped = std::min(std::max(R, 1e-9), 1.0);
+    stddev_deg = std::sqrt(-2.0 * std::log(R_clamped)) * 180.0 / M_PI;
+}
+
+void mean_stddev(const std::deque<double>& buf, double& mean, double& stddev) {
+    double s = 0.0;
+    for (double v : buf) s += v;
+    mean = s / buf.size();
+    double ss = 0.0;
+    for (double v : buf) ss += (v - mean) * (v - mean);
+    stddev = std::sqrt(ss / buf.size());
+}
+
+}  // namespace
+
+void PFGeoLocNode::try_qr_init(const uint8_t* mono_data, int width, int height) {
+    if (initialized_ || qr_locked_) return;
+
+    // Wrap the ROS-owned mono8 buffer (no copy).
+    cv::Mat mono(height, width, CV_8UC1, const_cast<uint8_t*>(mono_data));
+    auto qr = qr_init_->detect(mono);
+    if (!qr.has_value()) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+            "QR init: no valid QR (need geo:LAT,LON payload, drone above iPhone)");
+        return;
+    }
+
+    qr_lat_buf_.push_back(qr->lat);
+    qr_lon_buf_.push_back(qr->lon);
+    qr_yaw_buf_.push_back(qr->yaw_compass_deg);
+    const size_t cap = static_cast<size_t>(std::max(1, cfg_.init.qr_stable_n));
+    while (qr_lat_buf_.size() > cap) qr_lat_buf_.pop_front();
+    while (qr_lon_buf_.size() > cap) qr_lon_buf_.pop_front();
+    while (qr_yaw_buf_.size() > cap) qr_yaw_buf_.pop_front();
+
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+        "QR lock: lat=%.7f lon=%.7f yaw=%.2f side=%.0fpx (%zu/%zu samples)",
+        qr->lat, qr->lon, qr->yaw_compass_deg, qr->side_px,
+        qr_lat_buf_.size(), cap);
+
+    if (qr_lat_buf_.size() < cap) return;
+
+    if (!has_vio_) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+            "QR lock: stable QR, waiting for VIO pose to lock yaw");
+        return;
+    }
+
+    double yaw_mean, yaw_std;
+    circ_stats_deg(qr_yaw_buf_, yaw_mean, yaw_std);
+    if (yaw_std > cfg_.init.qr_yaw_max_stddev_deg) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+            "QR lock: yaw not stable (std=%.2f, thr=%.2f)",
+            yaw_std, cfg_.init.qr_yaw_max_stddev_deg);
+        return;
+    }
+
+    double lat_mean, lat_std, lon_mean, lon_std;
+    mean_stddev(qr_lat_buf_, lat_mean, lat_std);
+    mean_stddev(qr_lon_buf_, lon_mean, lon_std);
+    double pos_std_m = std::hypot(
+        lat_std * 111319.5,
+        lon_std * 111319.5 * std::cos(lat_mean * M_PI / 180.0));
+    if (pos_std_m > cfg_.init.qr_pos_max_stddev_m) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+            "QR lock: position not stable (std=%.3f m, thr=%.3f)",
+            pos_std_m, cfg_.init.qr_pos_max_stddev_m);
+        return;
+    }
+
+    qr_lock_lat_ = lat_mean;
+    qr_lock_lon_ = lon_mean;
+    qr_lock_yaw_compass_deg_ = yaw_mean;
+    qr_locked_ = true;
+
+    // Lock VIO→ENU rotation right now, on the ground. Position pinning is
+    // deferred to try_initialize() once altitude > init_altitude_m.
+    double vio_yaw_adj = wrap360(last_vio_yaw_deg_ + cfg_.pf.vio_yaw_offset_deg);
+    vio_motion_.lock_yaw(vio_yaw_adj, yaw_mean);
+
+    RCLCPP_INFO(get_logger(),
+        "QR LOCKED on ground: lat=%.7f lon=%.7f yaw=%.2f deg "
+        "(yaw_std=%.2f, pos_std=%.3fm) | VIO yaw locked (vio=%.2f -> align_theta=%.2f) "
+        "— waiting for takeoff (altitude > %.1f m)",
+        lat_mean, lon_mean, yaw_mean, yaw_std, pos_std_m,
+        last_vio_yaw_deg_, vio_motion_.align_theta_deg(),
+        cfg_.pf.init_altitude_m);
+}
+
 void PFGeoLocNode::try_initialize(float median_alt) {
     if (initialized_) return;
-    if (!pf_->try_init(median_alt)) return;
+    if (!qr_locked_) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Init: alt=%.1f m — waiting for QR lock on ground", median_alt);
+        return;
+    }
+    if (!pf_->try_init(median_alt)) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Init: QR locked, waiting for altitude > %.1f m (now %.1f m)",
+            cfg_.pf.init_altitude_m, median_alt);
+        return;
+    }
     if (!has_vio_) {
         RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Init: altitude OK (%.1f m) - waiting for VIO pose", median_alt);
+            "Init: alt+QR OK, waiting for VIO pose");
         return;
     }
 
-    double enu_yaw_deg = 0.0;
-    std::string yaw_source;
-    if (cfg_.pf.init_yaw != 0.0) {
-        enu_yaw_deg = cfg_.pf.init_yaw;
-        yaw_source = "config";
-    } else if (yaw_locked_pretakeoff_) {
-        enu_yaw_deg = locked_enu_yaw_compass_deg_;
-        yaw_source = "pre-locked";
-    } else if (last_rtk_yaw_deg_.has_value()) {
-        enu_yaw_deg = *last_rtk_yaw_deg_;
-        yaw_source = "RTK";
-    } else {
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Init: altitude+VIO OK - waiting for RTK yaw (init_yaw=0)");
-        return;
-    }
-
-    double seed_lat = 0.0, seed_lon = 0.0;
-    std::string seed_source;
-    if (cfg_.pf.init_lat != 0.0 && cfg_.pf.init_lon != 0.0) {
-        seed_lat = cfg_.pf.init_lat;
-        seed_lon = cfg_.pf.init_lon;
-        seed_source = "config";
-    } else if (has_gt_) {
-        seed_lat = gt_lat_;
-        seed_lon = gt_lon_;
-        seed_source = "RTK";
-    } else {
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Init: waiting for RTK fix (init_lat/lon=0)");
-        return;
-    }
-
-    auto [e, n] = enu_.wgs84_to_enu(seed_lat, seed_lon);
-    pf_->seed_from_position(e, n, enu_yaw_deg,
+    auto [e, n] = enu_.wgs84_to_enu(qr_lock_lat_, qr_lock_lon_);
+    pf_->seed_from_position(e, n, qr_lock_yaw_compass_deg_,
         cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
 
-    double vio_yaw_adj = wrap360(last_vio_yaw_deg_ + cfg_.pf.vio_yaw_offset_deg);
+    // VIO yaw was already locked on the ground via QR; now pin VIO origin to
+    // the takeoff position so deltas are computed in ENU.
     if (vio_motion_.is_yaw_locked()) {
-        // Rotation was captured on the ground; only pin the VIO origin here
         vio_motion_.pin_position(last_vio_x_, last_vio_y_);
     } else {
-        vio_motion_.align(last_vio_x_, last_vio_y_, vio_yaw_adj, enu_yaw_deg);
+        double vio_yaw_adj = wrap360(last_vio_yaw_deg_ + cfg_.pf.vio_yaw_offset_deg);
+        vio_motion_.align(last_vio_x_, last_vio_y_, vio_yaw_adj, qr_lock_yaw_compass_deg_);
     }
 
-    // Cache VIO→ENU mapping for dead-reckoned publication
     vio_ref_x_ = last_vio_x_;
     vio_ref_y_ = last_vio_y_;
     double alpha = vio_motion_.align_theta_deg() * M_PI / 180.0;
@@ -319,10 +408,9 @@ void PFGeoLocNode::try_initialize(float median_alt) {
 
     initialized_ = true;
     RCLCPP_INFO(get_logger(),
-        "INIT: alt=%.1f m | pos(%s) lat=%.6f lon=%.6f -> ENU(%.1f, %.1f) | "
-        "yaw(%s)=%.1f deg | VIO ref=(%.2f, %.2f) vio_yaw=%.1f -> align_theta=%.1f",
-        median_alt, seed_source.c_str(), seed_lat, seed_lon, e, n,
-        yaw_source.c_str(), enu_yaw_deg,
+        "INIT (QR@takeoff): alt=%.1f m | lat=%.7f lon=%.7f -> ENU(%.2f, %.2f) | "
+        "yaw=%.2f deg | VIO ref=(%.2f, %.2f) vio_yaw=%.1f -> align_theta=%.1f",
+        median_alt, qr_lock_lat_, qr_lock_lon_, e, n, qr_lock_yaw_compass_deg_,
         last_vio_x_, last_vio_y_, last_vio_yaw_deg_,
         vio_motion_.align_theta_deg());
 }
@@ -383,12 +471,6 @@ void PFGeoLocNode::vio_pose_callback(
 }
 
 void PFGeoLocNode::image_callback(const sensor_msgs::msg::Image::ConstSharedPtr& msg) {
-    if (!initialized_) {
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 3000,
-            "DBG img_cb: not initialized yet, skipping");
-        return;
-    }
-
     // Drop frame if still processing previous
     if (processing_.exchange(true)) {
         RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 3000,
@@ -403,17 +485,23 @@ void PFGeoLocNode::image_callback(const sensor_msgs::msg::Image::ConstSharedPtr&
         // Get mono8 data directly from ROS message (zero-copy if possible)
         const uint8_t* data;
         int width, height;
+        cv_bridge::CvImageConstPtr cv_ptr;  // keeps converted buffer alive
 
         if (msg->encoding == "mono8") {
             data = msg->data.data();
             width = msg->width;
             height = msg->height;
         } else {
-            // Convert via cv_bridge
-            auto cv_ptr = cv_bridge::toCvShare(msg, "mono8");
+            cv_ptr = cv_bridge::toCvShare(msg, "mono8");
             data = cv_ptr->image.data;
             width = cv_ptr->image.cols;
             height = cv_ptr->image.rows;
+        }
+
+        if (!initialized_) {
+            try_qr_init(data, width, height);
+            processing_.store(false);
+            return;
         }
 
         process_frame(data, width, height, msg->header.stamp);

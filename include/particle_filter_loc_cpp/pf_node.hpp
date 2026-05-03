@@ -22,6 +22,7 @@
 #include "geo_utils.hpp"
 #include "observation_model.hpp"
 #include "particle_filter.hpp"
+#include "qr_init_detector.hpp"
 #include "trust_model.hpp"
 #include "vio_motion_model.hpp"
 
@@ -39,6 +40,7 @@ private:
     void vio_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg);
     void try_initialize(float median_alt);
     void try_lock_yaw();
+    void try_qr_init(const uint8_t* mono_data, int width, int height);
     void process_frame(const uint8_t* mono_data, int width, int height,
                        const builtin_interfaces::msg::Time& stamp);
 
@@ -50,7 +52,19 @@ private:
     std::unique_ptr<ParticleFilter> pf_;
     std::unique_ptr<ObservationModel> obs_;
     std::unique_ptr<TrustTracker> trust_;
+    std::unique_ptr<QrInitDetector> qr_init_;
     VIOMotionModel vio_motion_;
+
+    // QR init stability buffers (filled in image_callback while !initialized_).
+    std::deque<double> qr_lat_buf_;
+    std::deque<double> qr_lon_buf_;
+    std::deque<double> qr_yaw_buf_;
+    // Locked QR pose: captured on the ground once samples are stable; used at
+    // takeoff (altitude > init_altitude_m) to seed the PF.
+    bool qr_locked_ = false;
+    double qr_lock_lat_ = 0.0;
+    double qr_lock_lon_ = 0.0;
+    double qr_lock_yaw_compass_deg_ = 0.0;
 
     // ROS
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_image_;
