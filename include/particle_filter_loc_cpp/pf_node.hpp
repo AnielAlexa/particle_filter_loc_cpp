@@ -12,9 +12,11 @@
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/range.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 
 #include <optional>
 
@@ -77,6 +79,29 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr pub_vio_position_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_ess_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_state_;
+    // Bridge-facing local odometry: takeoff-relative ENU pose for the MAVLink
+    // bridge (or any REP-103 ROS consumer).
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_local_;
+    // Latched origin (lat/lon at takeoff, from QR) and reset_counter — both
+    // transient_local QoS so a late-starting bridge gets the most recent.
+    rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr pub_origin_;
+    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr pub_reset_counter_;
+    uint8_t reset_counter_ = 0;
+
+    // Preflight status (JSON over std_msgs/String) — feeds the phone UI.
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_preflight_;
+    rclcpp::TimerBase::SharedPtr preflight_timer_;
+    void publish_preflight();
+    // Per-frame snapshot of the last QR decode (cleared each image callback
+    // before try_qr_init runs, so the UI sees "no QR" when a frame had none).
+    bool   last_qr_seen_ = false;
+    double last_qr_lat_ = 0.0;
+    double last_qr_lon_ = 0.0;
+    double last_qr_yaw_compass_deg_ = 0.0;
+    double last_qr_side_px_ = 0.0;
+    // Last compass yaw published to /odom_local (updated each process_frame
+    // after init). This is the value the bridge converts to NED yaw.
+    double last_pub_yaw_compass_deg_ = 0.0;
 
     // VIO→ENU mapping (cached at init for dead-reckoned VIO trajectory publication)
     double vio_ref_x_ = 0.0, vio_ref_y_ = 0.0;

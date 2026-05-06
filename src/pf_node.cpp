@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip>
 #include <numeric>
+#include <sstream>
 
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -64,6 +65,16 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
     pub_vio_position_ = create_publisher<sensor_msgs::msg::NavSatFix>("/pf_geo_loc/vio_position", 10);
     pub_ess_ = create_publisher<std_msgs::msg::Float32>("/pf_geo_loc/ess", 10);
     pub_state_ = create_publisher<std_msgs::msg::String>("/pf_geo_loc/state", 10);
+    pub_odom_local_ = create_publisher<nav_msgs::msg::Odometry>("/pf_geo_loc/odom_local", 10);
+
+    rclcpp::QoS latched(rclcpp::KeepLast(1));
+    latched.transient_local().reliable();
+    pub_origin_ = create_publisher<sensor_msgs::msg::NavSatFix>("/pf_geo_loc/origin", latched);
+    pub_reset_counter_ = create_publisher<std_msgs::msg::UInt8>("/pf_geo_loc/reset_counter", latched);
+
+    pub_preflight_ = create_publisher<std_msgs::msg::String>("/pf_geo_loc/preflight_status", 10);
+    preflight_timer_ = create_wall_timer(std::chrono::milliseconds(200),
+        std::bind(&PFGeoLocNode::publish_preflight, this));
 
     // Stats timer — print every 10s
     stats_timer_ = create_wall_timer(std::chrono::seconds(10),
@@ -139,6 +150,87 @@ void PFGeoLocNode::log_diag_row(
     diag_csv_.flush();
 }
 
+void PFGeoLocNode::publish_preflight() {
+    // Emit a tiny JSON-as-String. No third-party JSON dep needed; the consumer
+    // is the preflight web UI.
+    std::ostringstream os;
+    os.setf(std::ios::fixed);
+
+    auto bool_str = [](bool b) { return b ? "true" : "false"; };
+    auto num_or_null = [&](double v, bool valid, int prec) {
+        if (!valid) { os << "null"; return; }
+        os.precision(prec); os << v;
+    };
+
+    auto circ_std = [](const std::deque<double>& buf) -> double {
+        if (buf.empty()) return 0.0;
+        double sx = 0.0, sy = 0.0;
+        for (double v : buf) {
+            double r = v * M_PI / 180.0;
+            sx += std::cos(r); sy += std::sin(r);
+        }
+        double R = std::sqrt(sx * sx + sy * sy) / static_cast<double>(buf.size());
+        double Rc = std::min(std::max(R, 1e-9), 1.0);
+        return std::sqrt(-2.0 * std::log(Rc)) * 180.0 / M_PI;
+    };
+    auto lin_stats = [](const std::deque<double>& buf, double& mean, double& stddev) {
+        if (buf.empty()) { mean = 0.0; stddev = 0.0; return; }
+        double s = 0.0;
+        for (double v : buf) s += v;
+        mean = s / static_cast<double>(buf.size());
+        double ss = 0.0;
+        for (double v : buf) ss += (v - mean) * (v - mean);
+        stddev = std::sqrt(ss / static_cast<double>(buf.size()));
+    };
+
+    double yaw_std = circ_std(qr_yaw_buf_);
+    double pos_std_m = 0.0;
+    if (qr_lat_buf_.size() > 1) {
+        double lat_mean, lat_std, lon_mean, lon_std;
+        lin_stats(qr_lat_buf_, lat_mean, lat_std);
+        lin_stats(qr_lon_buf_, lon_mean, lon_std);
+        pos_std_m = std::hypot(
+            lat_std * 111319.5,
+            lon_std * 111319.5 * std::cos(lat_mean * M_PI / 180.0));
+    }
+
+    const int target_n = std::max(1, cfg_.init.qr_stable_n);
+    const int have_n   = static_cast<int>(qr_lat_buf_.size());
+    const bool yaw_aligned = vio_motion_.is_yaw_locked();
+
+    os << "{";
+    os << "\"qr_detected\":" << bool_str(last_qr_seen_) << ",";
+    os << "\"qr_last_lat\":";          num_or_null(last_qr_lat_,            last_qr_seen_, 7); os << ",";
+    os << "\"qr_last_lon\":";          num_or_null(last_qr_lon_,            last_qr_seen_, 7); os << ",";
+    os << "\"qr_last_yaw_compass_deg\":"; num_or_null(last_qr_yaw_compass_deg_, last_qr_seen_, 2); os << ",";
+    os << "\"qr_lock_samples\":[" << have_n << "," << target_n << "],";
+    os.precision(3); os << "\"qr_yaw_stddev_deg\":" << yaw_std << ",";
+    os.precision(4); os << "\"qr_pos_stddev_m\":"   << pos_std_m << ",";
+    os << "\"qr_locked\":" << bool_str(qr_locked_) << ",";
+    os << "\"qr_lock_lat\":";          num_or_null(qr_lock_lat_,            qr_locked_, 7); os << ",";
+    os << "\"qr_lock_lon\":";          num_or_null(qr_lock_lon_,            qr_locked_, 7); os << ",";
+    os << "\"qr_lock_yaw_compass_deg\":"; num_or_null(qr_lock_yaw_compass_deg_, qr_locked_, 2); os << ",";
+    os << "\"yaw_aligned\":" << bool_str(yaw_aligned) << ",";
+    // After init we report the live PF heading (what the bridge will send to
+    // the FC). Pre-init but post-yaw-lock, the locked QR yaw is the alignment.
+    {
+        bool have_aligned = yaw_aligned;
+        double aligned = initialized_ ? last_pub_yaw_compass_deg_ : qr_lock_yaw_compass_deg_;
+        os << "\"aligned_yaw_compass_deg\":";
+        num_or_null(aligned, have_aligned, 2);
+        os << ",";
+    }
+    os << "\"vio_seen\":"      << bool_str(has_vio_) << ",";
+    os << "\"altimeter_seen\":"<< bool_str(!altitude_buf_.empty()) << ",";
+    os << "\"initialized\":"   << bool_str(initialized_) << ",";
+    os << "\"phase\":\""       << phase_name(pf_->phase()) << "\"";
+    os << "}";
+
+    std_msgs::msg::String msg;
+    msg.data = os.str();
+    pub_preflight_->publish(msg);
+}
+
 void PFGeoLocNode::print_stats() {
     if (frame_count_ == 0) return;
     auto& s = stats_;
@@ -186,12 +278,8 @@ void PFGeoLocNode::alt_callback(const sensor_msgs::msg::Range::ConstSharedPtr& m
         "DBG alt_cb: range=%.2f buf_size=%zu initialized=%d",
         msg->range, altitude_buf_.size(), initialized_);
 
-    if (!initialized_ && altitude_buf_.size() >= 5) {
-        std::vector<float> sorted(altitude_buf_.begin(), altitude_buf_.end());
-        std::sort(sorted.begin(), sorted.end());
-        float median_alt = sorted[sorted.size() / 2];
-        try_initialize(median_alt);
-    }
+    // Init is now driven by QR lock in try_qr_init; altitude_buf_ is still
+    // consumed by process_frame to set obs.altitude_m for fine-match gating.
 }
 
 void PFGeoLocNode::try_lock_yaw() {
@@ -298,6 +386,16 @@ void PFGeoLocNode::try_qr_init(const uint8_t* mono_data, int width, int height) 
     // Wrap the ROS-owned mono8 buffer (no copy).
     cv::Mat mono(height, width, CV_8UC1, const_cast<uint8_t*>(mono_data));
     auto qr = qr_init_->detect(mono);
+
+    // Cache last detection (or absence of one) for the preflight UI.
+    last_qr_seen_ = qr.has_value();
+    if (qr.has_value()) {
+        last_qr_lat_ = qr->lat;
+        last_qr_lon_ = qr->lon;
+        last_qr_yaw_compass_deg_ = qr->yaw_compass_deg;
+        last_qr_side_px_ = qr->side_px;
+    }
+
     if (!qr.has_value()) {
         RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
             "QR init: no valid QR (need geo:LAT,LON payload, drone above iPhone)");
@@ -352,51 +450,16 @@ void PFGeoLocNode::try_qr_init(const uint8_t* mono_data, int width, int height) 
     qr_lock_yaw_compass_deg_ = yaw_mean;
     qr_locked_ = true;
 
-    // Lock VIO→ENU rotation right now, on the ground. Position pinning is
-    // deferred to try_initialize() once altitude > init_altitude_m.
+    // Full init at QR lock: yaw + position alignment + PF seed. Predict loop
+    // (in vio_pose_callback) starts running immediately; fine matching stays
+    // gated by altitude inside process_frame.
     double vio_yaw_adj = wrap360(last_vio_yaw_deg_ + cfg_.pf.vio_yaw_offset_deg);
     vio_motion_.lock_yaw(vio_yaw_adj, yaw_mean);
+    vio_motion_.pin_position(last_vio_x_, last_vio_y_);
 
-    RCLCPP_INFO(get_logger(),
-        "QR LOCKED on ground: lat=%.7f lon=%.7f yaw=%.2f deg "
-        "(yaw_std=%.2f, pos_std=%.3fm) | VIO yaw locked (vio=%.2f -> align_theta=%.2f) "
-        "— waiting for takeoff (altitude > %.1f m)",
-        lat_mean, lon_mean, yaw_mean, yaw_std, pos_std_m,
-        last_vio_yaw_deg_, vio_motion_.align_theta_deg(),
-        cfg_.pf.init_altitude_m);
-}
-
-void PFGeoLocNode::try_initialize(float median_alt) {
-    if (initialized_) return;
-    if (!qr_locked_) {
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Init: alt=%.1f m — waiting for QR lock on ground", median_alt);
-        return;
-    }
-    if (!pf_->try_init(median_alt)) {
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Init: QR locked, waiting for altitude > %.1f m (now %.1f m)",
-            cfg_.pf.init_altitude_m, median_alt);
-        return;
-    }
-    if (!has_vio_) {
-        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Init: alt+QR OK, waiting for VIO pose");
-        return;
-    }
-
-    auto [e, n] = enu_.wgs84_to_enu(qr_lock_lat_, qr_lock_lon_);
-    pf_->seed_from_position(e, n, qr_lock_yaw_compass_deg_,
+    auto [e, n] = enu_.wgs84_to_enu(lat_mean, lon_mean);
+    pf_->seed_from_position(e, n, yaw_mean,
         cfg_.pf.init_sigma_pos, cfg_.pf.init_sigma_hdg);
-
-    // VIO yaw was already locked on the ground via QR; now pin VIO origin to
-    // the takeoff position so deltas are computed in ENU.
-    if (vio_motion_.is_yaw_locked()) {
-        vio_motion_.pin_position(last_vio_x_, last_vio_y_);
-    } else {
-        double vio_yaw_adj = wrap360(last_vio_yaw_deg_ + cfg_.pf.vio_yaw_offset_deg);
-        vio_motion_.align(last_vio_x_, last_vio_y_, vio_yaw_adj, qr_lock_yaw_compass_deg_);
-    }
 
     vio_ref_x_ = last_vio_x_;
     vio_ref_y_ = last_vio_y_;
@@ -407,12 +470,38 @@ void PFGeoLocNode::try_initialize(float median_alt) {
     init_enu_n_ = n;
 
     initialized_ = true;
+    reset_counter_ = static_cast<uint8_t>(reset_counter_ + 1);
+
+    // Latched origin + reset_counter for the MAVLink bridge.
+    {
+        sensor_msgs::msg::NavSatFix origin_msg;
+        origin_msg.header.stamp = now();
+        origin_msg.header.frame_id = "odom";
+        origin_msg.latitude = qr_lock_lat_;
+        origin_msg.longitude = qr_lock_lon_;
+        origin_msg.altitude = 0.0;
+        origin_msg.status.status = sensor_msgs::msg::NavSatStatus::STATUS_FIX;
+        pub_origin_->publish(origin_msg);
+
+        std_msgs::msg::UInt8 rc_msg;
+        rc_msg.data = reset_counter_;
+        pub_reset_counter_->publish(rc_msg);
+    }
+
     RCLCPP_INFO(get_logger(),
-        "INIT (QR@takeoff): alt=%.1f m | lat=%.7f lon=%.7f -> ENU(%.2f, %.2f) | "
-        "yaw=%.2f deg | VIO ref=(%.2f, %.2f) vio_yaw=%.1f -> align_theta=%.1f",
-        median_alt, qr_lock_lat_, qr_lock_lon_, e, n, qr_lock_yaw_compass_deg_,
+        "INIT (QR lock on ground): lat=%.7f lon=%.7f -> ENU(%.2f, %.2f) | "
+        "yaw=%.2f deg (std=%.2f, pos_std=%.3fm) | VIO ref=(%.2f, %.2f) vio_yaw=%.1f "
+        "-> align_theta=%.1f | reset_counter=%u",
+        lat_mean, lon_mean, e, n, yaw_mean, yaw_std, pos_std_m,
         last_vio_x_, last_vio_y_, last_vio_yaw_deg_,
-        vio_motion_.align_theta_deg());
+        vio_motion_.align_theta_deg(),
+        static_cast<unsigned>(reset_counter_));
+}
+
+void PFGeoLocNode::try_initialize(float /*median_alt*/) {
+    // Legacy altimeter-driven init path. Init is now performed in try_qr_init
+    // at the QR-lock event; this stub is kept only to satisfy the existing
+    // header declaration and any leftover callers.
 }
 
 void PFGeoLocNode::yaw_callback(const std_msgs::msg::Float64::ConstSharedPtr& msg) {
@@ -499,6 +588,9 @@ void PFGeoLocNode::image_callback(const sensor_msgs::msg::Image::ConstSharedPtr&
         }
 
         if (!initialized_) {
+            // Reset before detection so a frame with no QR shows up as
+            // "not detected this frame" in /pf_geo_loc/preflight_status.
+            last_qr_seen_ = false;
             try_qr_init(data, width, height);
             processing_.store(false);
             return;
@@ -843,6 +935,27 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     // Publish estimate
     auto [pub_e, pub_n, pub_hdg] = pf.estimate();
     auto [pub_lat, pub_lon] = enu_.enu_to_wgs84(pub_e, pub_n);
+    last_pub_yaw_compass_deg_ = pub_hdg;
+
+    // Jump detection: a fine-match update that yanks the estimate by more
+    // than `pf.jump_reset_distance_m` (or yaw by `pf.jump_reset_yaw_deg`)
+    // signals a re-localization, not a smooth correction. Bump reset_counter
+    // so AP's EKF re-anchors instead of treating it as a 20m glitch.
+    double dx_jump = pub_e - est_e;
+    double dy_jump = pub_n - est_n;
+    double dist_jump = std::sqrt(dx_jump * dx_jump + dy_jump * dy_jump);
+    double dyaw_jump = std::abs(wrap360(pub_hdg - est_h + 180.0) - 180.0);
+    if (dist_jump > cfg_.pf.jump_reset_distance_m ||
+        dyaw_jump > cfg_.pf.jump_reset_yaw_deg) {
+        reset_counter_ = static_cast<uint8_t>(reset_counter_ + 1);
+        std_msgs::msg::UInt8 rc_msg;
+        rc_msg.data = reset_counter_;
+        pub_reset_counter_->publish(rc_msg);
+        RCLCPP_WARN(get_logger(),
+            "JUMP detected (matcher relocalization): Δpos=%.2f m, Δyaw=%.2f deg "
+            "→ reset_counter=%u",
+            dist_jump, dyaw_jump, static_cast<unsigned>(reset_counter_));
+    }
 
     sensor_msgs::msg::NavSatFix pos_msg;
     pos_msg.header.stamp = stamp;  // use bag timestamp for correct time alignment
@@ -850,6 +963,63 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
     pos_msg.latitude = pub_lat;
     pos_msg.longitude = pub_lon;
     pub_position_->publish(pos_msg);
+
+    // Local odometry (REP-103 ENU/FLU) for MAVLink bridge consumption.
+    {
+        // Weighted variance of east, north, yaw over particles.
+        const auto& P = pf.particles();
+        const auto& W = pf.weights();
+        double mean_e = 0.0, mean_n = 0.0;
+        double sx = 0.0, sy = 0.0;
+        for (int i = 0; i < P.rows(); ++i) {
+            mean_e += W(i) * P(i, COL_X);
+            mean_n += W(i) * P(i, COL_Y);
+            double r = P(i, COL_YAW) * M_PI / 180.0;
+            sx += W(i) * std::cos(r);
+            sy += W(i) * std::sin(r);
+        }
+        double var_e = 0.0, var_n = 0.0;
+        for (int i = 0; i < P.rows(); ++i) {
+            double de = P(i, COL_X) - mean_e;
+            double dn = P(i, COL_Y) - mean_n;
+            var_e += W(i) * de * de;
+            var_n += W(i) * dn * dn;
+        }
+        double R = std::sqrt(sx * sx + sy * sy);
+        double R_clamped = std::min(std::max(R, 1e-9), 1.0);
+        double var_yaw_rad = -2.0 * std::log(R_clamped);  // circular variance (rad²)
+
+        // Compass yaw → ROS ENU yaw (REP-103: 0=East, +CCW)
+        double yaw_compass_rad = pub_hdg * M_PI / 180.0;
+        double yaw_enu = M_PI_2 - yaw_compass_rad;
+
+        nav_msgs::msg::Odometry odom;
+        odom.header.stamp = stamp;
+        odom.header.frame_id = "odom";
+        odom.child_frame_id = "base_link";
+        odom.pose.pose.position.x = pub_e - init_enu_e_;  // east, takeoff-relative
+        odom.pose.pose.position.y = pub_n - init_enu_n_;  // north, takeoff-relative
+        odom.pose.pose.position.z = 0.0;
+        odom.pose.pose.orientation.x = 0.0;
+        odom.pose.pose.orientation.y = 0.0;
+        odom.pose.pose.orientation.z = std::sin(yaw_enu * 0.5);
+        odom.pose.pose.orientation.w = std::cos(yaw_enu * 0.5);
+
+        // Pose covariance (6x6 row-major): [x,y,z,roll,pitch,yaw]
+        for (int i = 0; i < 36; ++i) odom.pose.covariance[i] = 0.0;
+        odom.pose.covariance[0]  = var_e;
+        odom.pose.covariance[7]  = var_n;
+        odom.pose.covariance[14] = std::numeric_limits<double>::quiet_NaN();
+        odom.pose.covariance[21] = std::numeric_limits<double>::quiet_NaN();
+        odom.pose.covariance[28] = std::numeric_limits<double>::quiet_NaN();
+        odom.pose.covariance[35] = var_yaw_rad;
+
+        // Twist not estimated by PF — mark unknown.
+        for (int i = 0; i < 36; ++i) odom.twist.covariance[i] = 0.0;
+        odom.twist.covariance[0] = -1.0;  // ROS convention: unknown
+
+        pub_odom_local_->publish(odom);
+    }
 
     std_msgs::msg::Float32 ess_msg;
     ess_msg.data = static_cast<float>(pf.effective_sample_size());

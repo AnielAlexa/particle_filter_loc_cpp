@@ -89,6 +89,11 @@ particle_filter:
   vio_yaw_offset_deg: -90.0       # added to VIO quat yaw before alignment (empirical for ov_srvins)
   init_sigma_pos: 0.2             # tight RTK init (m)
   init_sigma_hdg: 2.0             # degrees
+
+  # Jump detection: per-frame estimate shift above these → bump reset_counter
+  # so AP's EKF re-anchors instead of rejecting as outlier.
+  jump_reset_distance_m: 25.0      # m
+  jump_reset_yaw_deg: 15.0        # deg
   # Sliding-window match voting (approach A): replaces gate + consensus.
   # PF no longer gates matches against its own estimate. Matches go into a
   # recent-window; only the inlier-weighted centroid of the agreeing cluster
@@ -97,7 +102,7 @@ particle_filter:
   vote_enabled: true
   vote_window_size: 6
   vote_min_agree: 3
-  vote_agreement_m: 15.0
+  vote_agreement_m: 11.0
   vote_max_age_frames: 15
   # Note: fine_consistency_max_m gate is now a no-op while vote_enabled=true.
 

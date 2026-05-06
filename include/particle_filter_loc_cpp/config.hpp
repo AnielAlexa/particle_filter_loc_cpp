@@ -79,6 +79,12 @@ struct PFConfig {
     double init_sigma_pos = 0.2;
     double init_sigma_hdg = 2.0;
 
+    // Jump detection: a per-frame estimate shift larger than these thresholds
+    // is treated as a matcher-driven re-localization (not a smooth correction)
+    // and increments the reset_counter so AP's EKF re-anchors cleanly.
+    double jump_reset_distance_m = 3.0;
+    double jump_reset_yaw_deg    = 15.0;
+
     // Pre-takeoff yaw lock: capture VIO↔ENU rotation on the ground before
     // the drone starts climbing, so any body rotation during the 0→init_altitude
     // "blind" window doesn't rely on a single noisy instantaneous sample.

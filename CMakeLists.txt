@@ -19,6 +19,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 
 # ─── System dependencies ────────────────────────────────────────
@@ -92,7 +93,7 @@ add_executable(pf_geo_loc_node
 
 find_package(ament_index_cpp REQUIRED)
 ament_target_dependencies(pf_geo_loc_node PUBLIC
-  rclcpp sensor_msgs std_msgs geometry_msgs cv_bridge ament_index_cpp
+  rclcpp sensor_msgs std_msgs geometry_msgs nav_msgs cv_bridge ament_index_cpp
 )
 target_link_libraries(pf_geo_loc_node PUBLIC pf_core)
 
