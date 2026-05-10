@@ -220,6 +220,11 @@ init:
   qr_stable_n: 5                 # consecutive QR detections required before seeding
   qr_yaw_max_stddev_deg: 1.5
   qr_pos_max_stddev_m: 0.05
+  qr_phi_offset_deg: -90.0           # additive bias on phi_img inside QR detector;
+                                   # use to correct QR yaw without disturbing
+                                   # camera.heading_offset_deg (satellite warp).
+                                   # Sign: a positive value rotates the apparent
+                                   # QR-up CW → reduces aligned_yaw_compass_deg.
 
 replay:
   mcap_path: "/home/jetson/bags_remote/Day2.6/Day2.6_0.mcap"

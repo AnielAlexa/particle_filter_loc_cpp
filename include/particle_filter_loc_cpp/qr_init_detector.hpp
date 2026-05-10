@@ -20,7 +20,8 @@ class QrInitDetector {
 public:
     QrInitDetector(double heading_offset_deg,
                    double min_side_px,
-                   double max_aspect_skew);
+                   double max_aspect_skew,
+                   double phi_offset_deg = 0.0);
 
     // Runs cv::QRCodeDetector on a mono8 image and decodes a `geo:LAT,LON` payload.
     // Returns nullopt if no valid QR is found, payload is malformed, or sanity checks fail.
@@ -30,6 +31,7 @@ private:
     double heading_offset_deg_;
     double min_side_px_;
     double max_aspect_skew_;
+    double phi_offset_deg_;
     cv::QRCodeDetector detector_;
 };
 

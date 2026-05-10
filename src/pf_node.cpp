@@ -32,7 +32,8 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
     qr_init_ = std::make_unique<QrInitDetector>(
         cfg_.camera.heading_offset_deg,
         cfg_.init.qr_min_side_px,
-        cfg_.init.qr_max_aspect_skew);
+        cfg_.init.qr_max_aspect_skew,
+        cfg_.init.qr_phi_offset_deg);
     vio_motion_.set_jump_params(cfg_.pf.vio_jump_threshold_m, cfg_.pf.vio_jump_velocity_ema_alpha);
 
     // QoS

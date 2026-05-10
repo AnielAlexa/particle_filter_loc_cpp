@@ -18,10 +18,12 @@ double wrap360(double deg) {
 
 QrInitDetector::QrInitDetector(double heading_offset_deg,
                                double min_side_px,
-                               double max_aspect_skew)
+                               double max_aspect_skew,
+                               double phi_offset_deg)
     : heading_offset_deg_(heading_offset_deg),
       min_side_px_(min_side_px),
-      max_aspect_skew_(max_aspect_skew) {}
+      max_aspect_skew_(max_aspect_skew),
+      phi_offset_deg_(phi_offset_deg) {}
 
 std::optional<QrInitResult> QrInitDetector::detect(const cv::Mat& mono8) {
     if (mono8.empty()) return std::nullopt;
@@ -70,7 +72,7 @@ std::optional<QrInitResult> QrInitDetector::detect(const cv::Mat& mono8) {
 
     // φ_img = angle of QR-up vector measured CW from image-up (math: image-up
     // is +y after flipping). Equivalently atan2(x, y) gives CW-from-up.
-    double phi_img_deg = std::atan2(up_x, up_y) * 180.0 / M_PI;
+    double phi_img_deg = std::atan2(up_x, up_y) * 180.0 / M_PI + phi_offset_deg_;
 
     // The reconstruction pipeline computes `heading_for_recon = drone_compass_yaw +
     // heading_offset_deg` where heading_for_recon is the world-compass angle of

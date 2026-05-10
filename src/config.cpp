@@ -202,6 +202,7 @@ FullConfig load_config(const std::string& yaml_path) {
         cfg.init.qr_stable_n = get(i, "qr_stable_n", cfg.init.qr_stable_n);
         cfg.init.qr_yaw_max_stddev_deg = get(i, "qr_yaw_max_stddev_deg", cfg.init.qr_yaw_max_stddev_deg);
         cfg.init.qr_pos_max_stddev_m = get(i, "qr_pos_max_stddev_m", cfg.init.qr_pos_max_stddev_m);
+        cfg.init.qr_phi_offset_deg = get(i, "qr_phi_offset_deg", cfg.init.qr_phi_offset_deg);
     }
 
     // Replay (topic names)

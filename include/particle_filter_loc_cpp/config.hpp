@@ -191,6 +191,9 @@ struct InitConfig {
     int qr_stable_n = 5;              // consecutive QR samples required before seeding
     double qr_yaw_max_stddev_deg = 1.5;
     double qr_pos_max_stddev_m = 0.05;
+    double qr_phi_offset_deg = 0.0;   // additive bias on phi_img inside QR detector;
+                                      // separates QR yaw correction from camera.heading_offset_deg
+                                      // (which the satellite reconstruction also depends on)
 };
 
 struct CameraConfig {

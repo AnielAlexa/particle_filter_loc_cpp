@@ -74,6 +74,11 @@ private:
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr sub_yaw_;
     rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr sub_alt_;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_vio_pose_;
+    // Bridge status (FC heartbeat / origin / home echo) — embedded into the
+    // preflight JSON so the UI only needs one topic.
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_bridge_status_;
+    std::mutex bridge_status_mutex_;
+    std::string last_bridge_status_json_;
 
     rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr pub_position_;
     rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr pub_vio_position_;
