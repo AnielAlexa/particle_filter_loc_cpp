@@ -656,7 +656,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
         std::optional<FineResult> best_fine;
 
         auto [rlat, rlon] = enu_.enu_to_wgs84(est_e, est_n);
-        double heading_for_recon = est_h + cfg_.camera.heading_offset_deg;
+        double heading_for_recon = est_h + cfg_.camera.heading_offset_deg
+                                         + cfg_.camera.recon_extra_heading_deg;
 
         // Build footprint reconstruction (adaptive context scale from particle spread)
         double adaptive_sat_ctx = pf.get_satellite_context_scale(
@@ -677,7 +678,28 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             }
         }
 
-        // Debug visualization disabled (cv::imshow/resize segfault with OpenCV 4.5d on this device)
+        // Debug viz: drone image vs reconstructed satellite crop (toggle via debug.viz_drone_vs_sat)
+        if (cfg_.debug.viz_drone_vs_sat) {
+            RCLCPP_INFO_ONCE(get_logger(), "debug viz enabled (DISPLAY=%s)",
+                             std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "(unset)");
+        }
+        if (cfg_.debug.viz_drone_vs_sat && fp_recon.has_value() && !fp_recon->satellite_crop.empty()) {
+            int W = cfg_.matchers.matcher_width;
+            int H = cfg_.matchers.matcher_height;
+            cv::Mat drone(height, width, CV_8UC1, const_cast<uint8_t*>(mono_data));
+            cv::Mat drone_rs, sat_rs;
+            cv::resize(drone, drone_rs, cv::Size(W, H));
+            cv::resize(fp_recon->satellite_crop, sat_rs, cv::Size(W, H));
+            cv::Mat drone_bgr;
+            cv::cvtColor(drone_rs, drone_bgr, cv::COLOR_GRAY2BGR);
+            if (sat_rs.channels() == 1) cv::cvtColor(sat_rs, sat_rs, cv::COLOR_GRAY2BGR);
+            cv::Mat side_by_side;
+            cv::hconcat(drone_bgr, sat_rs, side_by_side);
+            cv::putText(side_by_side, "drone", {10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 2);
+            cv::putText(side_by_side, "sat_recon", {W + 10, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 2);
+            cv::imshow("pf_debug: drone | satellite_recon", side_by_side);
+            cv::waitKey(1);
+        }
 
         // Stage A: Satellite perspective-warped (PnP only, no homography)
         if (fp_recon.has_value() && !fp_recon->satellite_crop.empty() && !fp_recon->warp_M_inv.empty()) {
@@ -694,7 +716,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
             const double ctx_min = cfg_.matchers.satellite_context_scale_min;
             if (sat_fine.has_value() && adaptive_sat_ctx > ctx_min + 0.05) {
                 double refine_heading = sat_fine->heading_deg.value_or(est_h)
-                                        + cfg_.camera.heading_offset_deg;
+                                        + cfg_.camera.heading_offset_deg
+                                        + cfg_.camera.recon_extra_heading_deg;
                 try {
                     auto refine_recon = obs.footprint().reconstruct(
                         sat_fine->lat, sat_fine->lon, obs.altitude_m, refine_heading,
@@ -876,7 +899,8 @@ void PFGeoLocNode::process_frame(const uint8_t* mono_data, int width, int height
                 // Double verification: reconstruct satellite at candidate position, re-match
                 // Primary can be weak — verification match must confirm with enough inliers
                 double verify_heading = primary_fine->heading_deg.value_or(est_h)
-                                        + cfg_.camera.heading_offset_deg;
+                                        + cfg_.camera.heading_offset_deg
+                                        + cfg_.camera.recon_extra_heading_deg;
                 bool verified = false;
                 double agreement_m = 999.0;
 

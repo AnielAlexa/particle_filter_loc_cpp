@@ -25,6 +25,7 @@ FullConfig load_config(const std::string& yaml_path) {
         cfg.camera.w = get(c, "w", cfg.camera.w);
         cfg.camera.h = get(c, "h", cfg.camera.h);
         cfg.camera.heading_offset_deg = get(c, "heading_offset_deg", cfg.camera.heading_offset_deg);
+        cfg.camera.recon_extra_heading_deg = get(c, "recon_extra_heading_deg", cfg.camera.recon_extra_heading_deg);
     }
 
     // ENU origin
@@ -212,6 +213,10 @@ FullConfig load_config(const std::string& yaml_path) {
         cfg.replay.yaw_topic = get<std::string>(r, "yaw_topic", cfg.replay.yaw_topic);
         cfg.replay.altimeter_topic = get<std::string>(r, "altimeter_topic", cfg.replay.altimeter_topic);
         cfg.replay.vio_pose_topic = get<std::string>(r, "vio_pose_topic", cfg.replay.vio_pose_topic);
+    }
+
+    if (auto d = root["debug"]) {
+        cfg.debug.viz_drone_vs_sat = get(d, "viz_drone_vs_sat", cfg.debug.viz_drone_vs_sat);
     }
 
     return cfg;

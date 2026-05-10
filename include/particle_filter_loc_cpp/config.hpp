@@ -202,6 +202,8 @@ struct CameraConfig {
     int w = 1280;
     int h = 720;
     double heading_offset_deg = 270.0;
+    double recon_extra_heading_deg = 0.0;  // applied only to satellite reconstruction;
+                                           // does not affect QR yaw seeding
 };
 
 struct ReplayConfig {
@@ -210,6 +212,10 @@ struct ReplayConfig {
     std::string yaw_topic = "/m300/rtk/yaw";
     std::string altimeter_topic = "/altimeter/range";
     std::string vio_pose_topic = "/ov_srvins/vio/pose";
+};
+
+struct DebugConfig {
+    bool viz_drone_vs_sat = false;   // show drone | satellite_recon side-by-side via cv::imshow
 };
 
 struct FullConfig {
@@ -221,6 +227,7 @@ struct FullConfig {
     MatcherConfig matchers;
     InitConfig init;
     ReplayConfig replay;
+    DebugConfig debug;
 };
 
 // Load from YAML file

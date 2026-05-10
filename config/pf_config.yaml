@@ -1,9 +1,10 @@
 camera_original:
-  fx: 1129.0
-  fy: 1130.0
+  fx: 1139.0
+  fy: 1139.0
   w: 1280
   h: 720
   heading_offset_deg: 270   # camera mount offset added to yaw for satellite alignment
+  recon_extra_heading_deg: -90   # extra rotation applied only to satellite reconstruction (does not affect QR)
 
 enu_origin:
   lat: 45.7896
@@ -21,7 +22,7 @@ particle_filter:
   drift_noise_m_per_s: 0.0     # simulate VIO drift
   drift_noise_hdg_per_s: 0.0      # 1.5x position drift
   sigma_obs_coarse: 10.0         # tight coarse pull
-  sigma_obs_fine: 3.0            # base observation sigma — tightened for strong VIO fine matches
+  sigma_obs_fine: 5.0            # base observation sigma — softened to smooth corrections and reduce jumps
   top_k_coarse: 5
   ess_threshold_fraction: 0.5
   init_altitude_m: 5.0           # seed PF early; camera processing still gated by matcher.altitude_min_process_m
@@ -86,7 +87,7 @@ particle_filter:
   init_lat: 0.0                    # preconfigured init position (0 = use RTK)
   init_lon: 0.0
   init_yaw: 0.0                   # ENU heading at init (deg; 0 = use RTK yaw)
-  vio_yaw_offset_deg: -90.0       # added to VIO quat yaw before alignment (empirical for ov_srvins)
+  vio_yaw_offset_deg: 0.0         # PF position now in true ENU (was -90 to compensate body-axis offset that bridge then re-corrected)
   init_sigma_pos: 0.2             # tight RTK init (m)
   init_sigma_hdg: 2.0             # degrees
 
@@ -102,7 +103,7 @@ particle_filter:
   vote_enabled: true
   vote_window_size: 6
   vote_min_agree: 3
-  vote_agreement_m: 11.0
+  vote_agreement_m: 9.0
   vote_max_age_frames: 15
   # Note: fine_consistency_max_m gate is now a no-op while vote_enabled=true.
 
@@ -225,6 +226,9 @@ init:
                                    # camera.heading_offset_deg (satellite warp).
                                    # Sign: a positive value rotates the apparent
                                    # QR-up CW → reduces aligned_yaw_compass_deg.
+
+debug:
+  viz_drone_vs_sat: true   # show drone | satellite_recon side-by-side via cv::imshow
 
 replay:
   mcap_path: "/home/jetson/bags_remote/Day2.6/Day2.6_0.mcap"

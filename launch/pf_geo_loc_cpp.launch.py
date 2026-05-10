@@ -27,6 +27,7 @@ def generate_launch_description():
             # Force OpenCV 4.12 to resolve before system 4.5d (cv_bridge dependency)
             'LD_PRELOAD': '/usr/local/lib/libopencv_imgproc.so.412'
                           ':/usr/local/lib/libopencv_imgcodecs.so.412'
+                          ':/usr/local/lib/libopencv_highgui.so.412'
                           ':/usr/local/lib/libopencv_core.so.412',
         },
     )
