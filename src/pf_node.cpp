@@ -86,7 +86,7 @@ PFGeoLocNode::PFGeoLocNode(const rclcpp::NodeOptions& options)
 }
 
 void PFGeoLocNode::init_diag_csv() {
-    std::string path = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/results/pf_diag.csv";
+    std::string path = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/results/pf_diag.csv";
     diag_csv_.open(path, std::ios::trunc);
     if (diag_csv_.is_open()) {
         diag_csv_ << "timestamp,frame,phase,est_e,est_n,est_h,"
@@ -249,7 +249,7 @@ void PFGeoLocNode::print_stats() {
         s.skip_coarse);
 
     // Append to stats CSV
-    std::string stats_path = "/home/jetson/particle_filter_ws/src/particle_filter_loc_cpp/results/pf_stats.csv";
+    std::string stats_path = "/home/jetson/ros2_ws/src/particle_filter_loc_cpp/results/pf_stats.csv";
     bool file_exists = std::ifstream(stats_path).good();
     std::ofstream f(stats_path, std::ios::app);
     if (f.is_open()) {
